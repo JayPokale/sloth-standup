@@ -160,7 +160,9 @@ def render(login: str, since: str, verdicts: list[Verdict], quiet: list[PullRequ
     previews = [p for p in quiet if p.preview_checks and not p.failed_checks]
     quiet = [p for p in quiet if not p.failed_checks and not p.preview_checks]
     act = [v for v in verdicts if v.needs_me]
-    fyi = [v for v in verdicts if not v.needs_me]
+    # Judged only because of an old, already explained failure: nothing new to read, so one line for all of them.
+    explained = [v for v in verdicts if not v.needs_me and not v.pr.events]
+    fyi = [v for v in verdicts if not v.needs_me and v.pr.events]
     out = [f"# Morning standup for @{login}", f"Since {since[:16].replace('T', ' ')} UTC.", ""]
     if merged:
         out.append(f"## 🎉 Merged ({len(merged)})")
@@ -183,6 +185,10 @@ def render(login: str, since: str, verdicts: list[Verdict], quiet: list[PullRequ
     if fyi:
         out.append(f"## 👀 FYI ({len(fyi)})")
         out += [f"- [{v.pr.key}]({v.pr.url}): {v.summary}" for v in fyi]
+        out.append("")
+    if explained:
+        out.append(f"## ✅ Red, but already explained ({len(explained)})")
+        out.append(", ".join(f"[{v.pr.key}]({v.pr.url})" for v in explained))
         out.append("")
     if silent_red:
         out.append(f"## 🔴 Checks failing, nobody said why ({len(silent_red)})")
