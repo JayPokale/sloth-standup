@@ -82,6 +82,10 @@ Read these with their caveats:
   had already explained in a comment. Its one miss (in both models) is the opposite: it took an unrelated comment as
   an explanation of a failing performance check.
 - The smaller model did better than the larger one here, and twice as fast; it is the default.
+- 2026-10-22, later: the prompt now says a failing check's name is never a request (the model had turned "Check if
+  admin changelog is up to date" into "update the admin changelog"). E2B after the change: 40/41 on all labelled PRs
+  (a different miss: a PR whose only comment is a bot calling it safe) and 14/14 on the held-out set
+  (`eval/results-prompt-v2.txt`).
 
 ## Layout
 

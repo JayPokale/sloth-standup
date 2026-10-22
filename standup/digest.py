@@ -24,6 +24,8 @@ author), and the new comments and reviews posted by other people and bots. Answe
   something, and the author has not already answered it in the context. False for thanks, approvals, "no
   findings", CI reports that only list results, and comments that say nothing is needed from the author.
 - "request": if request_for_author, what the author should do, as a short imperative (at most 15 words); else "".
+  A request comes only from the text of a comment or review. A failing check is not a request: never turn the name
+  of a check into a request.
 - "failures_explained": only about the failing checks listed. True if any comment, the author's included, says
   they are unrelated, flaky, or already being fixed elsewhere. False if nobody explains them, or if no check fails.
 - "evidence": the number of the new event that best supports your answer, or -1 if none.
