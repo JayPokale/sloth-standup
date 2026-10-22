@@ -63,18 +63,19 @@ failing checks? Names, links and counts in the digest come from the GitHub data,
 python3 eval/run.py gemma4:e2b gemma4:e4b none     # "none" = rules only
 ```
 
-38 labelled PRs from four snapshots: my own PRs (24, at three points in time), and the open PRs of two other
-ClickHouse contributors (an AI agent account and a maintainer). All results on 2026-10-22, on a GTX 1660 Ti:
+41 labelled PRs from five snapshots: 18 of my own (at two points in time), 9 of an AI agent account that contributes
+to ClickHouse, and 14 of a ClickHouse maintainer. All results on 2026-10-22, on a GTX 1660 Ti
+(`eval/results-2026-10-22.txt`):
 
-| | correct | needs you: caught | false alarms | model time |
+| 41 hand-labelled PRs | correct | needs you: caught | false alarms | model time |
 |---|--:|--:|--:|--:|
-| rules only (`none`) | 31/38 | 14/15 | 6/23 | 0 s |
-| Gemma 4 E2B | **37/38** | 14/15 | **0/23** | 234 s |
-| Gemma 4 E4B | 35/38 | 14/15 | 2/23 | 500 s |
+| rules only, no model | 34/41 | 16/17 | 6/24 | 0 s |
+| **Gemma 4 E2B** | **40/41** | 16/17 | **0/24** | 357 s |
+| Gemma 4 E4B | 38/41 | 16/17 | 2/24 | 473 s |
 
 Read these with their caveats:
 
-- **24 of the 38 were used to tune the rules and the prompt**, so they flatter the tool. The 14-PR maintainer set was
+- **27 of the 41 were used to tune the rules and the prompt** (mine and the agent's), so they flatter the tool. The 14-PR maintainer set was
   labelled before any run on it and used once: there, rules alone scored 14/14 and both models 13/14. Most of those
   PRs are decided by the open-thread rule, so that set says more about the rules than about the model.
 - What the model adds is reading explanations: all 6 false alarms of the rules-only run are failures that a person
