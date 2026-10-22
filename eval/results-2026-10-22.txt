@@ -1,0 +1,42 @@
+  BAD ClickHouse/ClickHouse#126887: said True, want False (author already explained the red checks as flaky). Look at the failing checks (Stateless tests (arm_binary, AsyncInsert, s3 storage, parallel), Performance Comparison (arm_release, master_head, 5/6)).
+  ok  ClickHouse/ClickHouse#126886: said False, want False (CI green, AI review has no findings). 
+  ok  ClickHouse/ClickHouse#126885: said False, want False (CI green; author explained the earlier failure). 
+  ok  ClickHouse/ClickHouse#126573: said True, want True (two failing stateless tests, nobody has said why). Look at the failing checks (Stateless tests (arm_binary, ParallelReplicas, s3 storage, parallel), Stateless tests (arm_binary, AsyncInsert, s3 storage, parallel)).
+  ok  ClickHouse/ClickHouse#126564: said False, want False (author answered the requested change and the reviewer confirmed it). 
+  ok  interledger/rhyza#355: said True, want True (a failing changelog check nobody has explained). Look at the failing checks (Check if admin changelog is up to date).
+  ok  davila7/claude-code-templates#1193: said True, want True (two failing checks, only a bot summary). Look at the failing checks (Security Audit, SkillSpector (changed skills)).
+  ok  heilcheng/awesome-agent-skills#601: said False, want False (reviewer found nothing left to change). 
+  BAD ClickHouse/ClickHouse#126206: said True, want False (maintainer says the failure is unrelated and nothing is needed). Look at the failing checks (Integration tests (arm_binary, 2/4)).
+  ok  ClickHouse/ClickHouse#125994: said False, want False (AI review approves, no findings). 
+  BAD ClickHouse/ClickHouse#125674: said False, want True (unanswered review comment asking for a fix and a test). 
+  BAD ClickHouse/ClickHouse#126887: said True, want False (author explained the red checks). Look at the failing checks (Stateless tests (arm_binary, AsyncInsert, s3 storage, parallel), Performance Comparison (arm_release, master_head, 5/6)).
+  ok  ClickHouse/ClickHouse#126886: said False, want False (CI green, AI review has no findings). 
+  BAD ClickHouse/ClickHouse#126573: said True, want False (author explained the red checks). Look at the failing checks (Stateless tests (arm_binary, ParallelReplicas, s3 storage, parallel), Stateless tests (arm_binary, AsyncInsert, s3 storage, parallel)).
+  ok  ClickHouse/ClickHouse#126564: said False, want False (reviewer confirmed the requested change is done). 
+  ok  interledger/rhyza#355: said True, want True (a failing check nobody has explained). Look at the failing checks (Check if admin changelog is up to date).
+  ok  davila7/claude-code-templates#1193: said True, want True (failing checks, only a bot summary). Look at the failing checks (Security Audit, SkillSpector (changed skills)).
+  BAD ClickHouse/ClickHouse#126206: said True, want False (maintainer explained the failure as unrelated). Look at the failing checks (Integration tests (arm_binary, 2/4)).
+  ok  ClickHouse/ClickHouse#124114: said False, want False (only the private CH Inc sync check fails, which the author's ledger exempts). (rules: not news)
+  ok  ClickHouse/ClickHouse#127326: said False, want False (AI review approves; author already asked a maintainer to start CI). 
+  ok  ClickHouse/ClickHouse#127320: said False, want False (AI review approves; author already asked a maintainer to start CI). 
+  ok  ClickHouse/ClickHouse#121041: said True, want True (a stateless test job fails on the current head; the ledgers cover older heads). (rules: failing, nobody said why)
+  ok  ClickHouse/ClickHouse#127278: said False, want False (CI green, AI review approves). 
+  ok  ClickHouse/ClickHouse#120502: said True, want True (Style check, Fast test and a build fail on the current head; ledger is for an older head). (rules: failing, nobody said why)
+  ok  ClickHouse/ClickHouse#127297: said False, want False (AI review approves; author already asked a maintainer to start CI). 
+  BAD ClickHouse/ClickHouse#127085: said True, want False (the reviewer's question was answered; the ledger covers this head's failures). Look at the failing checks (Stateless tests (amd_asan_ubsan, db disk, distributed plan, targeted)).
+  ok  ClickHouse/ClickHouse#127302: said False, want False (AI review approves; author already asked a maintainer to start CI). 
+  ok  ClickHouse/ClickHouse#120906: said True, want True (unanswered review thread(s) waiting on the author; a stateless job fails on the current head). Answer 12 open review threads. Look at the failing checks (Stateless tests (amd_asan_ubsan, db disk, distributed plan, targeted)).
+  ok  ClickHouse/ClickHouse#108078: said True, want True (unanswered review thread(s) waiting on the author). Answer 3 open review threads.
+  ok  ClickHouse/ClickHouse#127328: said True, want True (unanswered review thread(s) waiting on the author). Answer 1 open review thread.
+  ok  ClickHouse/ClickHouse#127131: said True, want True (unanswered review thread(s) waiting on the author (the author answered one of four)). Answer 3 open review threads.
+  ok  ClickHouse/ClickHouse#126531: said False, want False (no failing check; the author already handled the earlier failures). 
+  ok  ClickHouse/ClickHouse#127327: said False, want False (AI review approves, nothing failing). 
+  ok  ClickHouse/ClickHouse#110886: said True, want True (unanswered review thread(s) waiting on the author; a stateless job fails). Answer 8 open review threads. Look at the failing checks (Stateless tests (arm_binary, ParallelReplicas, s3 storage, parallel)).
+  ok  ClickHouse/ClickHouse#112313: said True, want True (unanswered review thread(s) waiting on the author; performance comparison fails unexplained). Answer 3 open review threads. Look at the failing checks (Performance Comparison (arm_release, master_head, 4/6), Performance Comparison (arm_release, master_head, 5/6)).
+  ok  ClickHouse/ClickHouse#127308: said True, want True (performance comparison fails (text_index_like #3); the author's later comment is not about it). Look at the failing checks (Performance Comparison (amd_release, master_head, 3/6), Finish Workflow).
+  ok  ClickHouse/ClickHouse#126538: said False, want False (author explained the only failure after the latest commit). 
+  ok  ClickHouse/ClickHouse#115581: said True, want True (unanswered review thread(s) waiting on the author). Answer 1 open review thread.
+  ok  ClickHouse/ClickHouse#110493: said False, want False (nothing failing, nothing asked). 
+  ok  ClickHouse/ClickHouse#117272: said False, want False (author confirmed nothing more is needed). 
+  ok  ClickHouse/ClickHouse#126194: said True, want True (performance comparison fails; the author's later comment is about a master merge, not it). Look at the failing checks (Performance Comparison (arm_release, master_head, 1/6)).
+none: 34/41 correct; needs-you caught 16/17, false alarms 6/24; 0s of model time

@@ -24,7 +24,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T06:55:35Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -48,7 +50,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T06:54:05Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -72,7 +76,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T05:52:27Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -96,7 +102,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T05:05:41Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -120,7 +128,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T04:59:45Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -144,7 +154,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T04:52:23Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/click-ui",
@@ -165,7 +177,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T04:46:38Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -186,9 +200,7 @@
    ],
    "failed_checks": [
     "Stateless tests (arm_binary, AsyncInsert, s3 storage, parallel)",
-    "Performance Comparison (arm_release, master_head, 5/6)",
-    "Mergeable Check",
-    "PR"
+    "Performance Comparison (arm_release, master_head, 5/6)"
    ],
    "pending_checks": 1,
    "passed_checks": 174,
@@ -219,7 +231,9 @@
    ],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-20T06:37:41Z",
+   "rollup_failed": true
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -253,7 +267,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-20T06:34:45Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -302,7 +318,9 @@
    ],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T04:55:44Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -323,9 +341,7 @@
    ],
    "failed_checks": [
     "Stateless tests (arm_binary, ParallelReplicas, s3 storage, parallel)",
-    "Stateless tests (arm_binary, AsyncInsert, s3 storage, parallel)",
-    "Mergeable Check",
-    "PR"
+    "Stateless tests (arm_binary, AsyncInsert, s3 storage, parallel)"
    ],
    "pending_checks": 0,
    "passed_checks": 175,
@@ -348,7 +364,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-21T08:17:08Z",
+   "rollup_failed": true
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -395,7 +413,9 @@
    ],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-20T06:29:10Z",
+   "rollup_failed": false
   },
   {
    "repo": "Piebald-AI/awesome-gemini-cli",
@@ -418,7 +438,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-22T04:09:08Z",
+   "rollup_failed": false
   },
   {
    "repo": "MichaelZelbel/awesome-antigravity",
@@ -439,7 +461,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-18T04:27:02Z",
+   "rollup_failed": false
   },
   {
    "repo": "yzfly/awesome-context-engineering",
@@ -460,7 +484,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-18T04:25:05Z",
+   "rollup_failed": false
   },
   {
    "repo": "interledger/rhyza",
@@ -494,7 +520,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-22T03:54:20Z",
+   "rollup_failed": false
   },
   {
    "repo": "awesome-opencode/awesome-opencode",
@@ -515,7 +543,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:53:31Z",
+   "rollup_failed": false
   },
   {
    "repo": "Piebald-AI/awesome-gemini-cli-extensions",
@@ -538,7 +568,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-22T04:09:12Z",
+   "rollup_failed": false
   },
   {
    "repo": "davila7/claude-code-templates",
@@ -572,7 +604,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:42:29Z",
+   "rollup_failed": false
   },
   {
    "repo": "libukai/awesome-agent-skills",
@@ -593,7 +627,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:29:58Z",
+   "rollup_failed": false
   },
   {
    "repo": "ccplugins/awesome-claude-code-plugins",
@@ -614,7 +650,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:25:32Z",
+   "rollup_failed": false
   },
   {
    "repo": "ai-for-developers/awesome-ai-coding-tools",
@@ -635,7 +673,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:25:03Z",
+   "rollup_failed": false
   },
   {
    "repo": "heilcheng/awesome-agent-skills",
@@ -666,7 +706,9 @@
     "Vercel"
    ],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:23:56Z",
+   "rollup_failed": false
   },
   {
    "repo": "BehiSecc/awesome-claude-skills",
@@ -687,7 +729,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:23:03Z",
+   "rollup_failed": false
   },
   {
    "repo": "VoltAgent/awesome-agent-skills",
@@ -708,7 +752,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:22:31Z",
+   "rollup_failed": false
   },
   {
    "repo": "travisvn/awesome-claude-skills",
@@ -729,7 +775,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:20:43Z",
+   "rollup_failed": false
   },
   {
    "repo": "ComposioHQ/awesome-claude-skills",
@@ -752,7 +800,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-16T05:18:34Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -772,9 +822,7 @@
     "external"
    ],
    "failed_checks": [
-    "Integration tests (arm_binary, 2/4)",
-    "Mergeable Check",
-    "PR"
+    "Integration tests (arm_binary, 2/4)"
    ],
    "pending_checks": 1,
    "passed_checks": 174,
@@ -832,7 +880,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-19T10:35:13Z",
+   "rollup_failed": true
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -866,7 +916,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-17T04:45:18Z",
+   "rollup_failed": false
   },
   {
    "repo": "ClickHouse/ClickHouse",
@@ -907,7 +959,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 1
+   "open_threads": 1,
+   "head_committed_at": "2026-10-18T04:18:41Z",
+   "rollup_failed": false
   },
   {
    "repo": "Elenterius/Biomancy",
@@ -928,7 +982,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-06T06:38:54Z",
+   "rollup_failed": false
   },
   {
    "repo": "Mrbysco/ASeedlessPlace",
@@ -949,7 +1005,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-06T06:38:40Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -970,7 +1028,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-06T06:10:52Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -991,7 +1051,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-06T06:10:36Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -1012,7 +1074,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-06T06:10:09Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -1033,7 +1097,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-03T13:32:02Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -1054,7 +1120,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-03T13:30:56Z",
+   "rollup_failed": false
   },
   {
    "repo": "interledger/rafiki",
@@ -1077,7 +1145,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-01T07:25:41Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -1098,7 +1168,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-01T07:19:04Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -1119,7 +1191,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-01T07:19:02Z",
+   "rollup_failed": false
   },
   {
    "repo": "The-DevOps-Daily/devops-daily",
@@ -1140,7 +1214,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-10-01T07:19:00Z",
+   "rollup_failed": false
   },
   {
    "repo": "pi-infected/token-harness-optimizer-leaderboard",
@@ -1161,7 +1237,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2026-09-13T06:09:59Z",
+   "rollup_failed": false
   },
   {
    "repo": "Rahul-Dhage/gcoey_dairyl_ink",
@@ -1182,7 +1260,9 @@
    "history": [],
    "preview_checks": [],
    "error": "",
-   "open_threads": 0
+   "open_threads": 0,
+   "head_committed_at": "2022-08-19T08:21:22Z",
+   "rollup_failed": false
   }
  ],
  "merged": [

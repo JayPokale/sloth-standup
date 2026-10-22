@@ -17,6 +17,10 @@ from datetime import datetime, timedelta, timezone
 PREVIEW_CHECKS = ("vercel", "netlify", "cloudflare pages", "deploy preview", "render preview")
 NOISE_BOTS = {"netlify", "changeset-bot", "vercel", "codecov", "github-actions", "coderabbitai", "sonarqubecloud"}
 FAILED = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"}
+# Checks that only roll up the others: red when any job failed, or when CI has not run yet (e.g. awaiting approval).
+ROLLUP_CHECKS = {"Mergeable Check", "PR", "Finish Check", "CI running"}
+# Checks the author cannot act on, e.g. a sync to a private mirror.
+IGNORED_CHECKS = {"CH Inc sync"}
 PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED"}
 
 QUERY = """
@@ -34,7 +38,7 @@ query($owner: String!, $name: String!, $number: Int!) {
         }
       }
       commits(last: 1) {
-        nodes { commit { oid statusCheckRollup { state contexts(first: 100) { ...Contexts } } } }
+        nodes { commit { oid committedDate statusCheckRollup { state contexts(first: 100) { ...Contexts } } } }
       }
     }
   }
@@ -97,6 +101,8 @@ class PullRequest:
     review_decision: str | None = None
     mergeable: str | None = None
     updated_at: str = ""
+    head_committed_at: str = ""  # when the head commit was made: explanations of failures before it are about older code
+    rollup_failed: bool = False  # only "all checks" rollups are red, i.e. CI has not run or another job failed
     labels: list[str] = field(default_factory=list)
     failed_checks: list[str] = field(default_factory=list)
     pending_checks: int = 0
@@ -124,6 +130,9 @@ def clean(body: str, limit: int = 1500) -> str:
     body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
     body = re.sub(r"<details>.*?</details>", "[details collapsed]", body, flags=re.S)
     body = re.sub(r"<sub>.*?</sub>", "", body, flags=re.S)
+    # Links are noise to a reader skimming for meaning (CI links can be kilobytes of base64); keep their text.
+    body = re.sub(r"!?\[([^\]]*)\]\([^)\s]+\)", r"\1", body)
+    body = re.sub(r"https?://\S{60,}", "[link]", body)
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
     return body if len(body) <= limit else body[:limit] + " [...]"
 
@@ -132,8 +141,8 @@ def my_login() -> str:
     return gh("api", "user")["login"]
 
 
-def open_pull_requests(login: str) -> list[PullRequest]:
-    items = gh("search", "prs", "--author", login, "--state", "open", "--limit", "100",
+def open_pull_requests(login: str, limit: int = 100) -> list[PullRequest]:
+    items = gh("search", "prs", "--author", login, "--state", "open", "--sort", "updated", "--limit", str(limit),
                "--json", "repository,number,title,url")
     return [PullRequest(i["repository"]["nameWithOwner"], i["number"], i["title"], i["url"]) for i in items]
 
@@ -155,6 +164,7 @@ def fill(pr: PullRequest, since: str, login: str) -> PullRequest:
     pr.labels = [label["name"] for label in data["labels"]["nodes"]]
 
     commit = data["commits"]["nodes"][0]["commit"] if data["commits"]["nodes"] else {}
+    pr.head_committed_at = commit.get("committedDate") or ""
     contexts = (commit.get("statusCheckRollup") or {}).get("contexts") or {"nodes": [], "pageInfo": {}}
     nodes = list(contexts["nodes"])
     # Big projects run hundreds of checks; the failed ones are often past the first page.
@@ -169,7 +179,11 @@ def fill(pr: PullRequest, since: str, login: str) -> PullRequest:
         else:
             label, status = ctx["context"], ctx["state"]
         status = (status or "").upper()
-        if status in FAILED and any(p in label.lower() for p in PREVIEW_CHECKS):
+        if label in IGNORED_CHECKS:
+            continue
+        if status in FAILED and label in ROLLUP_CHECKS:
+            pr.rollup_failed = True
+        elif status in FAILED and any(p in label.lower() for p in PREVIEW_CHECKS):
             pr.preview_checks.append(label)
         elif status in FAILED:
             pr.failed_checks.append(label)
@@ -217,9 +231,10 @@ def fill(pr: PullRequest, since: str, login: str) -> PullRequest:
     return pr
 
 
-def collect(since: str, workers: int = 8) -> tuple[str, list[PullRequest], list[PullRequest]]:
-    login = my_login()
-    prs = open_pull_requests(login)
+def collect(since: str, workers: int = 8, author: str | None = None,
+            limit: int = 100) -> tuple[str, list[PullRequest], list[PullRequest]]:
+    login = author or my_login()
+    prs = open_pull_requests(login, limit)
     def safe_fill(pr: PullRequest) -> PullRequest:
         try:
             return fill(pr, since, login)

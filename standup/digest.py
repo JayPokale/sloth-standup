@@ -11,7 +11,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 
-from .collect import PullRequest
+from .collect import PullRequest, clean
 
 OLLAMA = "http://localhost:11434"
 
@@ -60,19 +60,23 @@ def describe(pr: PullRequest) -> str:
              + (f" ({'; '.join(pr.failed_checks[:8])})" if pr.failed_checks else ""),
              ]
     if pr.history:
-        lines.append("Earlier on this PR, for context only (\"you\" is the author):")
+        lines.append("Earlier comments on this PR (\"you\" is the author). They count when deciding whether a request "
+                     "was already answered and whether the failing checks were explained:")
         for e in pr.history:
-            lines.append(f"- {e.kind} by {e.author} at {e.at}: {e.text[:600]}")
+            old = " (before the latest commit, so not about the current checks)" if before_head(pr, e) else ""
+            lines.append(f"- {e.kind} by {e.author} at {e.at}{old}: {clean(e.text, 600)}")
     lines.append("New events (judge these):")
     for i, e in enumerate(pr.events):
         who = f"{e.author} (bot)" if e.is_bot else e.author
-        lines.append(f"[{i}] {e.kind} by {who} at {e.at}:\n{e.text}")
+        lines.append(f"[{i}] {e.kind} by {who} at {e.at}:\n{clean(e.text)}")
     if not pr.events:
         lines.append("(none)")
     return "\n".join(lines)
 
 
 def ask(model: str, prompt: str) -> dict:
+    if model == "none":  # baseline for the eval: rules only, every request unknown, every failure unexplained
+        return {"summary": "", "request_for_author": False, "request": "", "failures_explained": False, "evidence": -1}
     body = json.dumps({
         "model": model,
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
@@ -84,6 +88,10 @@ def ask(model: str, prompt: str) -> dict:
     request = urllib.request.Request(f"{OLLAMA}/api/chat", body, {"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=600) as response:
         return json.loads(json.loads(response.read())["message"]["content"])
+
+
+def before_head(pr: PullRequest, e) -> bool:
+    return bool(pr.head_committed_at) and e.at < pr.head_committed_at
 
 
 def reviewer_followed_up(pr: PullRequest) -> bool:
@@ -104,11 +112,17 @@ def judge(pr: PullRequest, model: str) -> Verdict:
     # The model answers two narrow questions; the code decides. A failing check needs a look until someone says why.
     asked = bool(answer.get("request_for_author"))
     action = answer.get("request", "").strip() if asked else ""
-    unexplained = bool(pr.failed_checks) and not answer.get("failures_explained")
+    # Only a comment made after the latest commit can explain its checks; that part needs no model.
+    could_explain = any(not before_head(pr, e) for e in pr.history + pr.events)
+    unexplained = bool(pr.failed_checks) and not (could_explain and answer.get("failures_explained"))
     if unexplained:
         action = (action + " " if action else "") + f"Look at the failing checks ({', '.join(pr.failed_checks[:2])})."
     needs_me = asked or unexplained
     # Judgements we never leave to the model: GitHub already knows these need you.
+    if pr.waiting and not pr.stale:
+        n = len(pr.waiting)
+        needs_me = True
+        action = f"Answer {n} open review thread{'s' if n > 1 else ''}." + (f" {action}" if action else "")
     if pr.mergeable == "CONFLICTING" and not pr.stale:
         needs_me, action = True, "Merge the base branch in and resolve the conflicts." + (f" Also: {action}" if action else "")
     if pr.review_decision == "CHANGES_REQUESTED" and not action and not reviewer_followed_up(pr):
@@ -121,11 +135,18 @@ def needs_judging(pr: PullRequest) -> bool:
     comment to read, the model could only guess why a check failed."""
     if pr.error or (pr.stale and not pr.events):
         return False
-    return bool(pr.events or pr.review_decision == "CHANGES_REQUESTED" or pr.mergeable == "CONFLICTING")
+    if pr.waiting:
+        return True
+    # Failing checks with earlier comments: the model reads whether someone already explained them. With no
+    # comments at all there is nothing to read, and the PR is listed as failing without a guess.
+    explained_maybe = bool(pr.failed_checks and any(not before_head(pr, e) for e in pr.history))
+    return bool(pr.events or explained_maybe or pr.review_decision == "CHANGES_REQUESTED" or pr.mergeable == "CONFLICTING")
 
 
 def unload(model: str) -> None:
     """Free the GPU right away instead of keeping the model warm for five minutes."""
+    if model == "none":
+        return
     body = json.dumps({"model": model, "keep_alive": 0}).encode()
     request = urllib.request.Request(f"{OLLAMA}/api/generate", body, {"Content-Type": "application/json"})
     urllib.request.urlopen(request, timeout=60).read()

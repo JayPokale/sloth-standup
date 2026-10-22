@@ -1,0 +1,2163 @@
+{
+ "login": "alexey-milovidov",
+ "since": "2026-10-20T00:00:00Z",
+ "open": [
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 120906,
+   "title": "Enable the UBSan check for unsigned integer overflows",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/120906",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:21:15Z",
+   "head_committed_at": "2026-10-22T03:57:28Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-build",
+    "comp-build-system",
+    "submodule changed"
+   ],
+   "failed_checks": [
+    "Stateless tests (amd_asan_ubsan, db disk, distributed plan, targeted)"
+   ],
+   "pending_checks": 13,
+   "passed_checks": 38,
+   "events": [
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T06:27:39Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Cover ordered-read granularity rounding before enabling the fatal check\n\nThe new flag still instruments `splitRangesToAvoidLargeReads`, which evaluates `(max_block_size + rows_granularity - 1) / rows_granularity` at `src/Processors/QueryPlan/ReadFromMergeTree.cpp:1988`. `MergeTreeSettings::sanityCheck` accepts any positive `UInt64` for `index_granularity`, so this small table reaches the unchecked addition:\n\n```sql\nCREATE TABLE t (n UInt64)\nENGINE = MergeTree ORDER BY n\nSETTINGS index_granularity = 18446744073709551615;\nINSERT INTO t VALUES (1);\nSELECT n FROM t ORDER BY n\nSETTINGS max_threads = 1, optimize_read_in_order = 1;\n```\n\nDefault adaptive granularity lets the single-row insert stay small. The ordered-read caller at lines 2194\u20132198 nevertheless passes the table's `index_granularity` to this helper, so a positive `max_block_size + UINT64_MAX` now terminates the UBSan process before it reads the row. This is separate from the fixed rounding in `readFromPool`. Please use quotient/remainder ceiling division here and add an ordered-read regression case under UBSan.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4322082726"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T04:03:05Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Decoding.cpp:870] [P2] Check delta-page sizing outside the annotated decoding routine\n\nThe new fatal overflow check still instruments the `DeltaBinaryPackedDecoder` constructor, before this annotated `decodeImpl` is entered. A 17-byte `DELTA_BINARY_PACKED` payload, `80 80 80 80 80 80 80 80 80 01 01 02 00 00 02 00 00`, decodes to `values_per_block = 2^63`, `miniblocks_per_block = 1`, `total_values_remaining = 2`, and first value `0`. These values pass the header checks at line 713. The four remaining bytes give `max_blocks = 2`, so line 723 evaluates `2 * 2^63` and terminates the UBSan process before it can return an `INCORRECT_DATA` exception. No large allocation or page is required.\n\nPlease validate the header bounds or use checked sizing arithmetic in the constructor. The separately defined `nextMiniblock` also needs its `miniblock_values_remaining * bit_width + 7` calculation checked; the annotation here does not cover that callee. A compact malformed-page regression under UBSan would cover these parsing paths.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4332913976"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T16:17:03Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Cap `GenerateRandom` stream sizing before enabling the fatal check\n\nThe new `unsigned-integer-overflow` mode now instruments `StorageGenerateRandom::read`, where `src/Storages/StorageGenerateRandom.cpp:2128` still evaluates `num_streams * max_block_size` before the `max_sources` cap or the limit-based shrink runs. Both values come from query settings, so a UBSan build can still terminate during planning instead of reducing the stream count, for example with:\n\n```sql\nSELECT *\nFROM generateRandom('x UInt8')\nLIMIT 1\nSETTINGS max_threads = 18446744073709551615,\n         max_block_size = 18446744073709551615;\n```\n\nPlease compare with checked arithmetic (or divide first, e.g. `num_streams > ceil(query_limit / max_block_size)`) before enabling the flag globally.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4339161174"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T16:17:03Z",
+     "text": "[cmake/sanitize.cmake:145] [P2] Bound the unbounded `numbers_mt` chunk products before enabling the fatal check\n\nThe new flag also instruments the unbounded `ReadFromSystemNumbersStep` fast path. In `src/Processors/QueryPlan/ReadFromSystemNumbersStep.cpp:694` and `src/Processors/QueryPlan/ReadFromSystemNumbersStep.cpp:699` it still computes `num_streams * max_block_size` and `i * max_block_size` in `UInt64` before constructing the per-stream generators. On `system.numbers_mt` / `numbers_mt()` with a non-pushdown filter, those values come straight from query settings, so a large `max_threads` / `max_block_size` pair now terminates the UBSan build during pipe construction instead of producing disjoint streams.\n\nPlease cap or check these products before the fast path runs, and only then rely on the intentional unsigned stepping inside the source itself.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4339161187"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T17:50:00Z",
+     "text": "[src/Interpreters/TemporaryDataOnDisk.cpp:586] Because `parent->deltaAllocAndCheck` has already run before this scope checks its own `max_size_on_disk` (and before the negative-size guard above), a nested `query` scope can corrupt the `user`/`global` counters when this local check throws. The caller only updates its own `TemporaryDataBuffer::stat` after `deltaAllocAndCheck` returns, so unwinding later `freeAlloc` still subtracts the old size and cannot repair the parent.\n\nIn practice, a query that exceeds `max_temporary_data_on_disk_size_for_query` under a larger per-user/global limit will leave the ancestor scopes permanently over-accounted, which can trigger spurious later temp-data-limit exceptions for unrelated queries. Please validate the local scope first, then propagate the delta to `parent`, and only commit the local atomics after both checks succeed.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4340092490"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T19:22:31Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Make text-index block-size rounding nonwrapping\n\nThe newly fatal check also instruments `serializeTokensAndPostings` in `src/Storages/MergeTree/MergeTreeIndexText.cpp:1560`, where the accepted `UInt64` dictionary size is rounded with `(num_tokens + params.dictionary_block_size - 1) / params.dictionary_block_size`. A one-row insert reaches `1 + UINT64_MAX` before the subtraction:\n\n```sql\nCREATE TABLE t\n(\n    s String,\n    INDEX idx s TYPE text(tokenizer = 'splitByNonAlpha', dictionary_block_size = 18446744073709551615)\n)\nENGINE = MergeTree ORDER BY tuple();\nINSERT INTO t VALUES ('foo');\n```\n\nThe validator only rejects zero, so this reaches serialization and terminates the UBSan process despite needing just one dictionary block. The sibling `SegmentedPostingListCodec` constructor (`MergeTreeIndexTextPostingListCodec.cpp:38`) also rounds the accepted `posting_list_block_size` using `segment_size_ + BLOCK_SIZE - 1`; setting that argument to `UINT64_MAX` with `posting_list_codec = 'bitpacking'` reaches the wrap after 129 rows containing the same token.\n\nPlease use quotient/remainder ceiling division for dictionary blocks, validate that the rounded posting segment size fits before computing it, and cover these small inputs under UBSan before enabling the fatal check globally.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4340998228"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T00:54:21Z",
+     "text": "[src/Interpreters/BloomFilter.cpp:45] [P2] Cover the Bloom filter seed derivation as well as the hash loops\n\nThese annotations do not cover `BloomFilter::computeHashPair`, which runs before either loop and still evaluates `SEED_GEN_A * seed_ + SEED_GEN_B` at `src/Interpreters/BloomFilter.cpp:123` without suppression. The index validator accepts the entire `UInt64` seed range, so this small valid input reaches `845897321 * UINT64_MAX` and terminates the process under the newly fatal unsigned-overflow check:\n\n```sql\nCREATE TABLE t\n(\n    s String,\n    INDEX idx s TYPE tokenbf_v1(16, 3, 18446744073709551615)\n    GRANULARITY 1\n)\nENGINE = MergeTree ORDER BY tuple();\nINSERT INTO t VALUES ('foo');\n```\n\nThe insert calls `forEachTokenToBloomFilter`, then `BloomFilter::add`, then `computeHashPair` before entering `addHashPairToFilter`. `ngrambf_v1` shares this path. Please preserve the modular seed calculation with narrow wrapping arithmetic helpers or annotate `computeHashPair` consistently at its declaration and definition, and add a UBSan regression case with a large seed.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4343495703"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T04:36:03Z",
+     "text": "[cmake/sanitize.cmake:130] [P1] Cover the string-offset serializer from current master\n\nWhen merged with current `master`, this also instruments `serializeStringOffsets` in `src/DataTypes/Serializations/SerializationString.cpp:915`, which still reads `offsets[offset - 1]` with a `size_t` offset. `NativeWriter::write` passes offset `0`, and peers at revision `54492` or later select this helper through `WITH_SIZE_STREAM`. Consequently, an ordinary `SELECT 'x'` sent to a current native client would terminate the merged UBSan server on unsigned `0 - 1`.\n\nThis helper is present in the merged checkout, but absent from the PR head, so the green head CI does not cover the interaction. Please apply the same signed-index conversion used elsewhere in this patch and run `04512_native_string_with_size_stream` on the merged UBSan build. The existing HTTP case with `client_protocol_version=54492` and `SELECT 'abc' AS s FORMAT Native` exercises it.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4344585704"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T04:36:03Z",
+     "text": "[cmake/sanitize.cmake:145] [P2] Cover the trial-count sum in `proportionsZTest`\n\nThe new fatal check also instruments `FunctionTwoSampleProportionsZTest::executeImpl`, which still calculates `trials_x + trials_y` in `UInt64` at `src/Functions/ztest.cpp:136`. This accepted input reaches a sum of `2^64 + 1` before validation and would now terminate the UBSan process:\n\n```sql\nSELECT proportionsZTest(\n    toUInt64(1), toUInt64(1),\n    toUInt64(9223372036854775808),\n    toUInt64(9223372036854775809),\n    0.95, 'unpooled');\n```\n\nThe unpooled calculation otherwise uses the original counts and can return a valid result; these inputs do not require any large allocation. Please handle this sum and the pooled success-count sum with wider or checked arithmetic, and add a focused UBSan regression case.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4344585711"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-16T05:32:33Z",
+     "text": "The fix is in #126213. This `write-multi-no-fault[lsmt]` failure is not caused by this PR: one LSMT memtable flush never finished on all three replicas. A compressed block group started exactly at the end of the full 1 MiB file buffer, so `AppendWriteBuffer` got an empty working buffer and `ZstdDeflatingWriteBuffer::flush` spun at 100% CPU. Later flushes queued behind it and write throttling cut the run to 461k ops instead of about 6M. The same signature appears in 5 more runs of that scenario on unrelated PRs since 2026-09-15. #126213 needs the `can be tested` label for its CI to start.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#issuecomment-6208828024"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-18T19:01:22Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Cover subsecond formatting before enabling the fatal check\n\nThe new check also instruments the separately defined `processUnit` in `src/Functions/formatReadableTimeDelta.cpp:250`, which still multiplies the whole seconds by the subsecond scale in `UInt64`:\n\n```sql\nSELECT formatReadableTimeDelta(20000000000, 'nanoseconds');\n```\n\nHere `whole_part = 20000000000` and `unit_scale = 9`; the large-double shortcut does not fire, and `20000000000 * 1000000000` exceeds `UINT64_MAX`. This accepted query now terminates a UBSan process. The fractional accumulation at line 256 can overflow independently, e.g. with `formatReadableTimeDelta(18446744073.9, 'nanoseconds')`.\n\nPlease cover both scaling and accumulation with checked/wider arithmetic, or narrow wrapping helpers if preserving historical results, and add a focused UBSan regression case.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4308305518"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-18T19:01:22Z",
+     "text": "[cmake/sanitize.cmake:145] [P2] Cover format thread-budget arithmetic before enabling the fatal check\n\n`FormatParserSharedResources::getIOThreadsPerReader` and `getParsingThreadsPerReader` still calculate `(maximum + n - 1) / n` in `src/Formats/FormatParserSharedResources.cpp:40,47`. Both settings accept the full `UInt64` range. With one input stream, `maximum = UINT64_MAX` evaluates `UINT64_MAX + 1` before subtracting one, so the new fatal check terminates the process.\n\nFor example, run a UBSan `clickhouse-local` from the repository root:\n\n```sql\nSELECT s\nFROM file('tests/queries/0_stateless/data_parquet/delta_length_byte_array_split_page.parquet', Parquet)\nSETTINGS max_threads = 1,\n         max_download_threads = 18446744073709551615;\n```\n\n`FormatFactory::wrapReadBufferIfNeeded` calls the I/O helper even for this local file, before deciding whether parallel downloading applies. Setting `max_parsing_threads` to the same value reaches the sibling overflow. Please use nonwrapping ceiling division or reject unsupported limits, check the downstream parsing-budget products in `FormatFactory.cpp:616\u2013620`, and cover both settings under UBSan.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4308305528"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-18T19:45:20Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Handle slash-free Flight type URLs before enabling the fatal check\n\nThe new flag also instruments `commandForLogging` in `src/Server/ArrowFlight/ArrowFlightServer.cpp:288`, which still evaluates `type_url.find_last_of('/') + 1`. A client can send a serialized `google::protobuf::Any` with `type_url = \"arrow.flight.protocol.sql.CommandStatementQuery\"` and a serialized query as its value. `isArrowFlightSql` explicitly accepts this slash-free form (`commandSelector.h:49\u201355`), so logging evaluates `std::string::npos + 1` and terminates the UBSan process.\n\nFor example, pass `Any(type_url=\"arrow.flight.protocol.sql.CommandStatementQuery\", value=b\"\\x0a\\x08SELECT 1\").SerializeToString()` as the command of a `FlightDescriptor` to `GetFlightInfo`. Its `LOG_INFO` calls this helper before command processing; `GetSchema` and the other request loggers share the same path. Even a command that will be rejected must reach normal error handling without terminating the server.\n\nPlease use the guarded type-name extraction already present in `isArrowFlightSql` (or share that helper), and cover a slash-free command in the existing Flight tests under UBSan before enabling the check globally.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4308464564"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-18T19:01:22Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Cover subsecond formatting before enabling the fatal check\n\nThe new check also instruments the separately defined `processUnit` in `src/Functions/formatReadableTimeDelta.cpp:250`, which still multiplies the whole seconds by the subsecond scale in `UInt64`:\n\n```sql\nSELECT formatReadableTimeDelta [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4308305518"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-18T19:01:22Z",
+     "text": "[cmake/sanitize.cmake:145] [P2] Cover format thread-budget arithmetic before enabling the fatal check\n\n`FormatParserSharedResources::getIOThreadsPerReader` and `getParsingThreadsPerReader` still calculate `(maximum + n - 1) / n` in `src/Formats/FormatParserSharedResources.cpp:40,47`. Both settings accept the full `UInt64` ran [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4308305528"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-18T19:45:20Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Handle slash-free Flight type URLs before enabling the fatal check\n\nThe new flag also instruments `commandForLogging` in `src/Server/ArrowFlight/ArrowFlightServer.cpp:288`, which still evaluates `type_url.find_last_of('/') + 1`. A client can send a serialized `google::protobuf::Any` with `type_ [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4308464564"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T06:27:39Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Cover ordered-read granularity rounding before enabling the fatal check\n\nThe new flag still instruments `splitRangesToAvoidLargeReads`, which evaluates `(max_block_size + rows_granularity - 1) / rows_granularity` at `src/Processors/QueryPlan/ReadFromMergeTree.cpp:1988`. `MergeTreeSettings::sani [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4322082726"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T04:03:05Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Decoding.cpp:870] [P2] Check delta-page sizing outside the annotated decoding routine\n\nThe new fatal overflow check still instruments the `DeltaBinaryPackedDecoder` constructor, before this annotated `decodeImpl` is entered. A 17-byte `DELTA_BINARY_PACKED` payload, `80 80 80 80 80 80 80 80 80 01 01 02 00 00 02 00 00` [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4332913976"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T16:17:03Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Cap `GenerateRandom` stream sizing before enabling the fatal check\n\nThe new `unsigned-integer-overflow` mode now instruments `StorageGenerateRandom::read`, where `src/Storages/StorageGenerateRandom.cpp:2128` still evaluates `num_streams * max_block_size` before the `max_sources` cap or the limi [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4339161174"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T16:17:03Z",
+     "text": "[cmake/sanitize.cmake:145] [P2] Bound the unbounded `numbers_mt` chunk products before enabling the fatal check\n\nThe new flag also instruments the unbounded `ReadFromSystemNumbersStep` fast path. In `src/Processors/QueryPlan/ReadFromSystemNumbersStep.cpp:694` and `src/Processors/QueryPlan/ReadFromSystemNumbersStep.cpp:699` it [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4339161187"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T17:50:00Z",
+     "text": "[src/Interpreters/TemporaryDataOnDisk.cpp:586] Because `parent->deltaAllocAndCheck` has already run before this scope checks its own `max_size_on_disk` (and before the negative-size guard above), a nested `query` scope can corrupt the `user`/`global` counters when this local check throws. The caller only updates its own `TemporaryDataBuffer::sta [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4340092490"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T19:22:31Z",
+     "text": "[cmake/sanitize.cmake:130] [P2] Make text-index block-size rounding nonwrapping\n\nThe newly fatal check also instruments `serializeTokensAndPostings` in `src/Storages/MergeTree/MergeTreeIndexText.cpp:1560`, where the accepted `UInt64` dictionary size is rounded with `(num_tokens + params.dictionary_block_size - 1) / params.dic [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4340998228"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T00:54:21Z",
+     "text": "[src/Interpreters/BloomFilter.cpp:45] [P2] Cover the Bloom filter seed derivation as well as the hash loops\n\nThese annotations do not cover `BloomFilter::computeHashPair`, which runs before either loop and still evaluates `SEED_GEN_A * seed_ + SEED_GEN_B` at `src/Interpreters/BloomFilter.cpp:123` without suppression. The index validator [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4343495703"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T04:36:03Z",
+     "text": "[cmake/sanitize.cmake:130] [P1] Cover the string-offset serializer from current master\n\nWhen merged with current `master`, this also instruments `serializeStringOffsets` in `src/DataTypes/Serializations/SerializationString.cpp:915`, which still reads `offsets[offset - 1]` with a `size_t` offset. `NativeWriter::write` passes o [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4344585704"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T04:36:03Z",
+     "text": "[cmake/sanitize.cmake:145] [P2] Cover the trial-count sum in `proportionsZTest`\n\nThe new fatal check also instruments `FunctionTwoSampleProportionsZTest::executeImpl`, which still calculates `trials_x + trials_y` in `UInt64` at `src/Functions/ztest.cpp:136`. This accepted input reaches a sum of `2^64 + 1` before validation an [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/120906#discussion_r4344585711"
+    }
+   ],
+   "error": "",
+   "open_threads": 12
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 108078,
+   "title": "Re-land: make Ctrl+C terminate the output of a result set in the client promptly",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/108078",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:20:53Z",
+   "head_committed_at": "2026-10-22T01:41:53Z",
+   "rollup_failed": false,
+   "labels": [
+    "comp-cli",
+    "pr-improvement"
+   ],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 178,
+   "events": [
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T09:47:06Z",
+     "text": "[src/Client/ClientBase.cpp:2684] [P2] Honor the preserved interrupt when printing an empty result's status\n\n`resetOutput` has already called `setupSignalHandler` after finishing the pager, which disarms `query_interrupt_handler`. With `partial_result_on_first_cancel = 1`, a signal received during execution deliberately leaves `cancelled` false. Although `stopQuery` now preserves that signal in `query_received_interrupt`, this condition ignores the flag, so it selects the ordinary write with a hook that always returns false. An empty partial result can therefore hang indefinitely printing `Ok.` to a stuck stdout after the first Ctrl+C.\n\nI reproduced this with the PR's fast-test binary in interactive `clickhouse-local`, a draining pager (`--pager 'cat > result_file'`), and `SELECT sum(sleepEachRow(0.1)) AS s FROM numbers(1000000) HAVING s < 0 SETTINGS max_block_size = 1, max_threads = 1 FORMAT TSV`. After the pager started, I filled the stdout PTY and sent one `SIGINT`. Six seconds later the process was still polling that PTY for `POLLOUT` in 100 ms intervals; draining stdout immediately released `Ok.`, the summary, and the prompt, with no exception.\n\nPlease include `query_received_interrupt` in this decision and add an interactive empty-result case to the pager regression. `05407_client_partial_result_pager_blocked_epilogue` runs in batch mode, so it exercises the later epilogue but bypasses this status line.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#discussion_r4323633421"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T22:23:33Z",
+     "text": "[src/Client/ClientBase.cpp:2792] [P2] Let cancelled local queries advance past periodic profile packets\n\nThe responsive log flush can still prevent a stage-one cancellation from completing in `clickhouse-local`. With `--print-profile-events`, the default `interactive_delay` is 100 ms, and each flush to a full sink now returns after a 100 ms poll while retaining its bytes. `LocalConnection::poll` checks `needSendProgressOrMetrics` before `pollImpl`, so another profile packet is immediately due. This repeats without pulling the cancelled executor or setting `state->is_finished`, and diagnostics continue accumulating instead of reaching `EndOfStream`.\n\nI reproduced this with the current PR fast-test binary, `--partial_result_on_first_cancel=1 --print-profile-events --server_logs_file=- --pager 'cat > result_file'`, stdout on a pre-filled PTY, and `SELECT sleepEachRow(0.01) FROM numbers(1000000) SETTINGS max_block_size=1, max_threads=1 FORMAT TSV`. After one `SIGINT`, it was still polling six seconds later; draining stdout released 37 KB of profile events spanning that interval and let it finish. A second interrupt also terminates it.\n\nPlease make cancellation advance the local executor even when periodic diagnostics are continuously due, or stop those periodic flushes after the stage-one interrupt. A blocked profile sink must not starve the cancellation drain.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#discussion_r4342589688"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T22:23:33Z",
+     "text": "[src/Client/ClientBase.cpp:2967] [P2] Handle retained stdout diagnostics before disarming the pager handler\n\nWith `--server_logs_file=-`, the stage-one write path can leave profile-event bytes buffered in `std_out`. Clearing `logs_out_terminal_buf` here does not flush or bound those bytes. After the draining pager exits, `setupSignalHandler` calls `stopQuery`; the subsequent `std_out->next` at line 2985 then has cancellation predicates that permanently return false. Unlike the later epilogue, this flush never consults `query_received_interrupt`, so a completed partial result can still leave the client polling a stuck stdout indefinitely.\n\nI isolated this with the PR fast-test binary using `--partial_result_on_first_cancel=1 --print-profile-events --profile-events-delay-ms=1000 --server_logs_file=- --pager 'cat > result_file'`, a pre-filled stdout PTY, and `SELECT sleepEachRow(0.01) FROM numbers(1000000) SETTINGS max_block_size=1, max_threads=1 FORMAT TSV`. One `SIGINT` finished the query and pager. The trace then showed the pager reaped and the signal handler reinstalled, followed by six seconds of stdout polls. A second interrupt forced exit status 130.\n\nPlease handle retained stdout diagnostics under a bounded policy for an already interrupted query, or preserve a cancellation predicate through this final flush. The ordinary hook must not become inert while buffered bytes still need flushing.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#discussion_r4342589689"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-13T14:18:24Z",
+     "text": "\ud83d\udd75 Merged `master` (`9fc0f795f59`). Resolved a conflict in `ClientBase::resetOutput` against master's [link] I kept this PR's teardown signal baseline and the best-effort budget for decorative `tty_buf` writes, and added master's `handle_exception` helper plus the try/catch around the progress table clear. `clickhouse` builds. All 17 client cancellation tests from this PR pass locally. Master's new `05386_webterminal_close_during_query` could not run locally because my bare local server has no `system.text_log`.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#issuecomment-6147647674"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-14T08:45:39Z",
+     "text": "\ud83d\udd75 @groeneai, investigate the failure: [link] (`Logical error: Cannot call function and because is has 3 arguments but 2 columns were captured.`, STID: 2458-4cb4, server-side in `ColumnFunction::reduce` via short-circuit `and`; unrelated to this client-only change) and provide a fix in a separate PR. If the fix is already in progress, link it here.\n\nThe `00933_test_fix_extra_seek_on_compressed_cache` failure is fixed on master by https://github.com/ClickHouse/ClickHouse/pull/125561. Master has been merged into this branch to pick up that fix.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#issuecomment-6164488457"
+    },
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-14T09:44:30Z",
+     "text": "The fix is #125126 (mine), merged 2026-10-13 at 15:34 UTC. This run built the merge commit `260ebc73`, whose master parent `6cdfe1f9` does not contain it. The failed query (from `fatal.log`) reads `system.projections`: `ReadFromSystemProjections::applyFilters` builds its filter with `splitFilterDagForAllowedInputs` over a block that has only `database`. That dropped `table = 't19'` from the inner 3-argument `and` but kept its 3-argument function, so `ColumnFunction::reduce` failed when the outer short-circuit `and` evaluated it lazily. #125126 rebuilds the reduced `and`.\n\nI ran the query in `clickhouse local` with a database `d2` holding one MergeTree table with a projection and `short_circuit_function_evaluation = 'force_enable'`. This PR's CI debug binary and master `2ca8bd9021d` (the parent of the #125126 merge) abort in `ColumnFunction::reduce`, in the same frame as the CI log. The master CI debug build of the #125126 merge commit `50b17deb63d` returns `0`. This failure does not come from this PR, and no separate PR is needed.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#issuecomment-6165510934"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-15T08:48:56Z",
+     "text": "\ud83d\udd75 Thanks @groeneai. The branch already contains #125126 (merge `50b17deb63d`), so the BuzzHouse failure should not come back. On the latest head `ec3edb99cce`, the only red jobs were `Build (arm_asan_ubsan)` and `Build (wasm_parser)`, which failed on an infrastructure error (`error during connect: ... /run/docker.sock: write: broken pipe`). The push of `927de617fd9` reruns them. That commit addresses both open review threads: `count` no longer counts the retained suffix twice (also in `ForkWriteBuffer`), and the retained buffer now grows geometrically, so appending to a stuck sink no longer costs one `poll` timeout per byte. New unit tests cover both.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#issuecomment-6188210651"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T09:47:06Z",
+     "text": "[src/Client/ClientBase.cpp:2684] [P2] Honor the preserved interrupt when printing an empty result's status\n\n`resetOutput` has already called `setupSignalHandler` after finishing the pager, which disarms `query_interrupt_handler`. With `partial_result_on_first_cancel = 1`, a signal received during execution deliberately leaves `canc [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#discussion_r4323633421"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T22:23:33Z",
+     "text": "[src/Client/ClientBase.cpp:2792] [P2] Let cancelled local queries advance past periodic profile packets\n\nThe responsive log flush can still prevent a stage-one cancellation from completing in `clickhouse-local`. With `--print-profile-events`, the default `interactive_delay` is 100 ms, and each flush to a full sink now returns after [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#discussion_r4342589688"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T22:23:33Z",
+     "text": "[src/Client/ClientBase.cpp:2967] [P2] Handle retained stdout diagnostics before disarming the pager handler\n\nWith `--server_logs_file=-`, the stage-one write path can leave profile-event bytes buffered in `std_out`. Clearing `logs_out_terminal_buf` here does not flush or bound those bytes. After the draining pager exits, `setupSign [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/108078#discussion_r4342589689"
+    }
+   ],
+   "error": "",
+   "open_threads": 3
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127328,
+   "title": "Allow concurrent `predictXGBoost` on the same model",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127328",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:17:42Z",
+   "head_committed_at": "2026-10-22T02:42:14Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-performance",
+    "v26.10-must-backport"
+   ],
+   "failed_checks": [],
+   "pending_checks": 8,
+   "passed_checks": 20,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T04:59:34Z",
+     "text": "Workflow [PR], commit [9096ca88]\n\n---\n#### AI Review\n\n##### Summary\n\nThe PR removes per-model serialization from `predictXGBoost` and adds a parallel-versus-serial prediction test. The supplied measurements support the performance improvement, but removing synchronization for the supported `gblinear` booster introduces a concurrency safety issue. One blocking finding remains.\n\n##### Findings\n\n**\u274c Blockers**\n\n- `src/Dictionaries/XGBoostModel.cpp:300`: **Concurrent `gblinear` predictions can race on shared monitor state.** `sanitizeTrainingParams` still accepts this booster, whereas the vendored prediction guarantee covers only `gbtree` and `dart`. `GBLinear::PredictBatch` updates its shared `monitor_`, and `Monitor::Start` and `Monitor::Stop` modify the statistics map, timer and counter without synchronization when callers have debug verbosity active. Dictionary-loading workers can retain that thread-local verbosity and later execute queries through `GlobalThreadPool`. Removing the mutex therefore permits a data race and undefined behavior despite the thread-local prediction output. Retain serialization for `gblinear`, or remove the shared mutation before enabling concurrent predictions for it.\n\n##### Tests\n\n- \u26a0\ufe0f The new test covers only the default `gbtree` booster. Add focused concurrent `gblinear` coverage with the debug monitor active and validate it under TSan.\n\n##### Missing context / blind spots\n\n- \u26a0\ufe0f No ClickHouse executable or configured build is available locally, so [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127328#issuecomment-6333108252"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:17:30Z",
+     "text": "[src/Dictionaries/XGBoostModel.cpp:300] \u274c **Preserve synchronization for `gblinear` predictions**\n\n`booster` still accepts `gblinear` (`sanitizeTrainingParams` and the layout documentation), but the vendored thread-safety guarantee covers only `gbtree` and `dart`. In this exact revision, `GBLinear::PredictBatch` calls the booster's shared `monitor_`; `Monitor::Start` and `Monitor::Stop` mutate its map, timer and counter without locking whenever the calling threads have debug verbosity enabled. That state can persist on pooled workers after loading a dictionary with `verbosity 3`, since dictionary loading and query execution both use `GlobalThreadPool`. Concurrent predictions then race even though the returned prediction buffer is thread-local.\n\nPlease retain the per-model mutex for `gblinear`, or make that implementation safe before removing its synchronization. Add focused concurrency coverage for this booster with the debug monitor active; the added test uses only the default `gbtree` booster.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127328#discussion_r4344803699"
+    }
+   ],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:17:30Z",
+     "text": "[src/Dictionaries/XGBoostModel.cpp:300] \u274c **Preserve synchronization for `gblinear` predictions**\n\n`booster` still accepts `gblinear` (`sanitizeTrainingParams` and the layout documentation), but the vendored thread-safety guarantee covers only `gbtree` and `dart`. In this exact revision, `GBLinear::PredictBatch` calls the booster's shared [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127328#discussion_r4344803699"
+    }
+   ],
+   "error": "",
+   "open_threads": 1
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127131,
+   "title": "Zero-copy columns cache for `Parquet`",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127131",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:14:20Z",
+   "head_committed_at": "2026-10-22T04:51:37Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-performance",
+    "comp-parquet-reader-v3"
+   ],
+   "failed_checks": [],
+   "pending_checks": 22,
+   "passed_checks": 29,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T07:58:38Z",
+     "text": "Workflow [PR], commit [9190df35]\n\n---\n#### AI Review\n\n##### Summary\n\nThe PR shares decoded `Parquet` columns with the columns cache in chunks of 65,536 rows. Three memory-limit regressions remain: cold decoding without size statistics, partial cached reads selected by the column index, and expressions processing unfiltered cached chunks. **\u274c Block.**\n\n##### Missing context / blind spots\n\n- \u26a0\ufe0f Runtime reproductions used CI ARM release build `5a467cfa23a38e5ec510192cdac638f8e0897e9d`; the build for reviewed head `9190df35e39f7899764551172698d463f8227368` was unavailable. Each failing path was traced through the current source; rerunning the focused cases on the head build would close this validation gap.\n\n##### Findings\n\n**\u274c Blockers**\n\n1. **Cold-cache decoding must remain bounded when optional statistics are absent.** `Reader.cpp:2916` calls the estimator before the dictionary is decoded. Without `size_statistics`, strings are estimated at 20 bytes each (`Reader.cpp:3126`), so the guard forces a full chunk even when it cannot fit. A PyArrow `15.0.2` file with 65,536 dictionary-encoded 2,048-byte strings and 16 dictionary values has `have_size_statistics = false`: under a 160 MiB limit and requested 1,000-row blocks, the cache-disabled aggregate succeeds, while a cold cached read attempts a 256.56 MiB allocation and raises `MEMORY_LIMIT_EXCEEDED`. Preserve bounded decoding when decoded size is unknown. Existing thread.\n\n2. **Partial cached reads must budget the rows they copy.* [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#issuecomment-6311040105"
+    },
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T18:37:51Z",
+     "text": "### Build profile diff (arm_release)\n\nComparing `5a467cfa2` with master `a4ab3777d` (stripped binary size, per-symbol sizes and ThinLTO time; object sizes against the warmup build of `a04427407`; compile times per translation unit against the most recent warmup build that recompiled it).\n\n\u2705 No significant changes.\n\n[details collapsed]\n\n[details collapsed]\n\nJob report",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#issuecomment-6323664608"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T22:15:24Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:outdated] [P1] Keep cold-cache decoding within the query's memory budget\n\nOverriding the block-size calculation here requires an entire 65,536-row chunk to fit in query memory **before** `addToColumnsCacheWrite` can hand it over to the server. For wide columns this makes a streaming query fail even though its requested smaller blocks fit. With one settled `Parquet` row group containing 65,536 strings generated by `leftPad(toString(number % 16), 2048, 'x')`, a 1 GiB columns cache, `max_threads = 1`, `input_format_parquet_max_block_size = 1000`, and `max_memory_usage = '64Mi'`, `SELECT count(), sum(length(s))` succeeds with `use_columns_cache = 0`, but enabling the cache raises `MEMORY_LIMIT_EXCEEDED` while allocating 256.57 MiB for `s`. I reproduced this with build `874cc93e8`; this entire sizing function is unchanged at `18b77042`.\n\nPlease retain bounded decoding when a chunk is too large for the query, for example by excluding that row group from cache writes, and add a cold-cache regression with wide values. Transferring ownership after decoding cannot prevent this allocation failure.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4342531021"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T01:59:54Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:outdated] The fix in `bbf67c5d504` still misses dictionary-encoded files without optional `size_statistics`. At `src/Processors/Formats/Impl/Parquet/Reader.cpp:2912`, the guard calls `estimateColumnMemoryBytesPerRow` before the dictionary has been decoded; `Reader.cpp:3122` therefore estimates each string as 20 bytes. A 65,536-row chunk is estimated at only 1.25 MiB, below a quarter of a 160 MiB limit, so `Reader.cpp:2919` still forces the whole chunk.\n\nI checked a file written by PyArrow 15.0.2, containing 65,536 strings of 2,048 bytes with 16 dictionary values. Its `ParquetMetadata` output confirms `have_size_statistics = false`. This fixture can be generated with:\n\n```python\nimport pyarrow as pa\nimport pyarrow.parquet as pq\n\nvalues = pa.array([str(i).rjust(2048, 'x') for i in range(16)])\nindices = pa.array([i % 16 for i in range(65536)], type=pa.int32())\ns = pa.DictionaryArray.from_arrays(indices, values)\npq.write_table(pa.table({'s': s}), 'arrow.parquet',\n               row_group_size=1000000, use_dictionary=True,\n               write_statistics=True, write_page_index=True)\n```\n\nWith the available `d79dfd028c` build, a cold `SELECT count(), sum(length(s)) FROM file('arrow.parquet', Parquet, 's String')` using `max_threads = 1`, `input_format_parquet_max_block_size = 1000`, and `max_memory_usage = '160Mi'` succeeds with `use_columns_cache = 0`, but fails allocating 256.56 MiB with `use_columns_cache = 1`. The current guard's 20-byte estimate leaves that same decoding path enabled. P [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4343831918"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T02:00:03Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:2916] [P1] Budget filtered copies of cached columns before forcing whole chunks\n\nExcluding `served_from_cache` columns makes `bytes_per_row` zero on a fully warm read, so this guard always replaces a requested small block with 65,536 rows. Those columns still consume query memory when filtered: `getOrFormOutputColumn` calls `index` for the surviving rows, allocating a new column rather than sharing the cached one.\n\nFor example, write one settled `Parquet` row group with 65,536 rows, `id = number`, and `s = leftPad(toString(number % 16), 2048, 'x')`, and warm both columns in a sufficiently large cache. Then run:\n\n```sql\nSELECT count(), sum(length(s))\nFROM file('warm.parquet', Parquet, 'id UInt64, s String')\nPREWHERE id % 16 != 0\nSETTINGS max_threads = 1,\n         input_format_parquet_max_block_size = 1000,\n         max_memory_usage = '96Mi',\n         use_columns_cache = 1;\n```\n\nOn the available `d79dfd028c` build, the cache-disabled query succeeds, while this warm read raises `MEMORY_LIMIT_EXCEEDED` allocating 120.56 MiB for the filtered strings (61,440 surviving rows). The current `bbf67c5d504` guard preserves that path: both columns are cached, so its estimate is zero and it still selects a full chunk.\n\nPlease include cached columns that may need copying in the subgroup memory budget and retain the requested smaller blocks when needed. Add a warm-cache `PREWHERE` regression with wide strings; the new cold-cache test does not exercise this path.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4343832630"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:13:30Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:2916] The fix in `9190df35e39` still omits column-index filtering. At `src/Processors/Formats/Impl/Parquet/Reader.cpp:2911\u20132916`, a plain `WHERE` with `optimize_move_to_prewhere = 0` leaves `rows_may_be_filtered` false, even when the column index has shortened `row_ranges`. A fully cached read therefore estimates zero bytes and forces a whole chunk. The partial range then takes the copying `cut` path at `Reader.cpp:4216`.\n\nI reproduced this on the available `5a467cfa23a` ARM release build; the new condition remains false for this query at `9190df35e39`. Write one row group of 65,536 rows with `id = number` and `s = leftPad(toString(number % 16), 512, 'x')`, using `output_format_parquet_data_page_size = 8192`, `output_format_parquet_batch_size = 1024`, and page indexes enabled. After warming both columns, run:\n\n```sql\nSELECT count(), sum(length(s))\nFROM file('page_range.parquet', Parquet, 'id UInt64, s String')\nWHERE id >= 4096\nSETTINGS max_threads = 1,\n         input_format_parquet_max_block_size = 1000,\n         input_format_parquet_memory_high_watermark = '4Mi',\n         max_memory_usage = '24Mi',\n         optimize_move_to_prewhere = 0,\n         use_top_k_dynamic_filtering = 0,\n         use_columns_cache = 1;\n```\n\nWith the cache disabled this returns 61,440 rows and 31,457,280 string bytes. The warm read raises `MEMORY_LIMIT_EXCEEDED` allocating 30.66 MiB. `EXPLAIN` confirms a separate `Filter`, without `PREWHERE`. Please include partial ranges produced by the column index in the [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4344780769"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:13:40Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:2923] [P1] Bound warm-cache blocks for downstream expression allocations\n\nThe memory needed by a warm read is not limited to the reader's own copies. When there is no pushed-down filter, all cached columns are excluded from `bytes_per_row`, so this override expands a requested 1,000-row block to 65,536 rows regardless of `max_memory_usage`. Expressions above the reader must then allocate their results for the entire chunk.\n\nFor a settled file with one row group of 65,536 strings generated by `leftPad(toString(number % 16), 512, 'x')`, warm `s` in a sufficiently large columns cache, then run:\n\n```sql\nSELECT sum(cityHash64(concat(s, '!')))\nFROM file('wide.parquet', Parquet, 's String')\nSETTINGS max_threads = 1,\n         input_format_parquet_max_block_size = 1000,\n         input_format_parquet_memory_high_watermark = '4Mi',\n         max_memory_usage = '24Mi',\n         use_columns_cache = 1;\n```\n\nOn the available `5a467cfa23a` ARM release build, disabling the cache succeeds, while the warmed read raises `MEMORY_LIMIT_EXCEEDED` allocating 32.62 MiB in `concat`. The current guard preserves this path: there is no filter, `bytes_per_row` remains zero, and a full chunk is forced. Please retain bounded blocks when a cached chunk is too large for query-side processing, even when the reader can share it without copying, and add an unfiltered expression regression.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4344781727"
+    }
+   ],
+   "history": [
+    {
+     "kind": "inline_comment",
+     "author": "you",
+     "at": "2026-10-22T01:35:09Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:outdated] \ud83d\udd75 Fixed in bbf67c5d504: when the columns that are decoded would take, for a whole chunk, more than a quarter of the smallest memory limit in effect (of the query, the user or the server, found through the memory trackers of the thread), and the block size settings ask for less than a chunk, the row group is read in the blocks the settings ask for (still never crossing a chunk, so the cached columns, if any, are served with `cut`) and is not written to the cache. Added `05443_parquet_columns_cache_wide_chunks` with your case (65536 strings of 2 KiB, `input_format_parquet_max_block_size = 1000`): on `874cc93e8` it fails allocating 256.57 MiB. The limit in the test is 160 MiB rather than 64 MiB because the read without the cache alone peaks at 37-74 MiB from run to run on this build (the read-ahead of the reader), so 64 MiB is not stable even with the cache off.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4343708263"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "you",
+     "at": "2026-10-22T04:52:01Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:2916] Fixed in 9190df35e39: when rows may be filtered (`PREWHERE`, row-level filter, lazy materialization, top-K), the columns served from the cache are counted in the estimate, so the row group is read in the requested blocks when copying a whole chunk would take a large part of the memory limit. Regression test: `05444_parquet_columns_cache_warm_filter_memory` (fails with `MEMORY_LIMIT_EXCEEDED` before the fix).",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4344667385"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T01:59:54Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:outdated] The fix in `bbf67c5d504` still misses dictionary-encoded files without optional `size_statistics`. At `src/Processors/Formats/Impl/Parquet/Reader.cpp:2912`, the guard calls `estimateColumnMemoryBytesPerRow` before the dictionary has been decoded; `Reader.cpp:3122` therefore estimates each string as  [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4343831918"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:13:30Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:2916] The fix in `9190df35e39` still omits column-index filtering. At `src/Processors/Formats/Impl/Parquet/Reader.cpp:2911\u20132916`, a plain `WHERE` with `optimize_move_to_prewhere = 0` leaves `rows_may_be_filtered` false, even when the column index has shortened `row_ranges`. A fully cached read therefore e [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4344780769"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:13:40Z",
+     "text": "[src/Processors/Formats/Impl/Parquet/Reader.cpp:2923] [P1] Bound warm-cache blocks for downstream expression allocations\n\nThe memory needed by a warm read is not limited to the reader's own copies. When there is no pushed-down filter, all cached columns are excluded from `bytes_per_row`, so this override expands a requested 1,000-row block to 65,536 ro [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127131#discussion_r4344781727"
+    }
+   ],
+   "error": "",
+   "open_threads": 3
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126531,
+   "title": "Fix wrong results of `arrayReduceInRanges` for ranges that do not fit in the array",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126531",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:10:44Z",
+   "head_committed_at": "2026-10-22T03:29:32Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-bugfix",
+    "comp-regular-function"
+   ],
+   "failed_checks": [],
+   "pending_checks": 13,
+   "passed_checks": 25,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-20T07:07:49Z",
+     "text": "Both already have fixes, so I am not opening new PRs.\n\n- `03821_drop_workload_during_query_race`: fixed by my #126345, merged 2026-10-19 10:34 UTC. This run (2026-10-18 01:21 UTC) predates the merge, and its stdout has the stack that PR handles: `RequestQueue::enqueueRequest` throws `INVALID_SCHEDULER_NODE` (expected for a query in a just-dropped workload) from the `CPULeaseAllocation` constructor on the query thread, and the old line-by-line `grep -v` let the frames through. Since the merge the test ran 662 times on master; its 3 failures there are all on commits from before the merge. The remaining PR failures are on trees without it.\n  It is not #126518: there the throw happens on the scheduler thread (`CPULeaseAllocation::grant` enqueuing into the other resource's purged queue), which kills that thread and hangs `DROP WORKLOAD`. Here the server kept working and 60/60 reruns passed. That path is handled by the open draft #124968.\n- `FunctionsStress.stress`: the stuck worker (132 s on `range(CAST(8864748 AS UInt64))`) has the stack my open #126210 addresses: `__asan_stack_malloc_1 <- PODArray::operator[] <- ColumnVector<unsigned long>::doCompareAt <- ColumnArray::compareAtImpl <- FunctionsStressTestThread::executeFunction`. Mechanism: [link] #126210 changes only the test harness; its CI has finished and it is mergeable, still without a review.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126531#issuecomment-6285424290"
+    },
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T08:18:43Z",
+     "text": "### Build profile diff (arm_release)\n\nComparing `66ca95248` with master `c8a410bb9` (stripped binary size, per-symbol sizes and ThinLTO time; compile times per translation unit against the most recent warmup build that recompiled it).\n\n\u2705 No significant changes.\n\n[details collapsed]\n\n[details collapsed]\n\nJob report",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126531#issuecomment-6286634705"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-17T21:13:13Z",
+     "text": "Workflow [PR], commit [f2edcd3d]\n\n---\n#### AI Review\n\n##### Summary\n\n`arrayReduceInRanges` now clips out-of-bounds ranges without overflowing index or length arithmetic. Reviewed PR head `f2edcd3d9c4a`, the full diff, surrounding aggregation and slicing code, and all prior discussion. No unresolved findings remain. The earlier unsigned-length concern is addressed by explicit documentation and regression cases. The new bounds regression and existing function tests passed in the current Fast test.\n\n##### Final Verdict\n\n\u2705 **Approve**",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126531#issuecomment-6241193921"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-20T06:40:04Z",
+     "text": "\ud83d\udd75 @groeneai, investigate the failures: `03821_drop_workload_during_query_race` ([link] fails on master and many PRs; possibly https://github.com/ClickHouse/ClickHouse/issues/126518) and `FunctionsStress.stress` stuck in `__asan_stack_malloc_1` ([link] possibly addressed by https://github.com/ClickHouse/ClickHouse/pull/126210) and provide a fix in a separate PR. If the fix is already in progress, link it here.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126531#issuecomment-6285030781"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-22T04:54:38Z",
+     "text": "\ud83d\udd75 Thanks @groeneai, both failures from the earlier run are covered by #126345 (merged) and #126210. The latest run failed only `Upgrade check (amd_release)` with `BackupsWorker: Failed to make internal backup ... Got error from the initiator ... Query was cancelled` ([link] It is unrelated to this PR, has failed on about a dozen PRs since 2026-10-12, and is handled by the open #125562. I merged master and applied the AI review's suggestion: the changelog category is now `Bug Fix`.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126531#issuecomment-6333045592"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127327,
+   "title": "Accept `DateTime`, `Date` and `Date32` in KQL `bin` and `bin_at`",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127327",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:10:37Z",
+   "head_committed_at": "2026-10-22T04:52:35Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-bugfix",
+    "v26.10-must-backport"
+   ],
+   "failed_checks": [],
+   "pending_checks": 21,
+   "passed_checks": 27,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T04:54:22Z",
+     "text": "Workflow [PR], commit [ccc3fe48]\n\n---\n#### AI Review\n\n##### Summary\n\nPR https://github.com/ClickHouse/ClickHouse/pull/127327 allows KQL `bin` and `bin_at` to accept `DateTime`, `Date`, and `Date32` by widening fixed-length datetime operands to `DateTime64` before rounding. No actionable findings were identified in head `ccc3fe48a74bbcaeab19f8a2a1e943a852c78f19`.\n\n##### Missing context / blind spots\n\n- \u26a0\ufe0f Runtime validation remains unconfirmed: this checkout has no ClickHouse executable, CI builds are queued, and the targeted stateless report is unavailable. A successful CI run of `05441_kql_bin_narrow_datetime` would close this gap.\n\n##### Final Verdict\n\nStatus: **\u2705 Approve**. No code changes requested; runtime validation remains subject to CI.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127327#issuecomment-6333041965"
+    }
+   ],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 110886,
+   "title": "MaterializedPostgreSQL: coordinated Replicated/Shared nested tables for HA",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/110886",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:08:52Z",
+   "head_committed_at": "2026-10-22T01:44:36Z",
+   "rollup_failed": false,
+   "labels": [
+    "submodule changed",
+    "comp-postgresql",
+    "pr-experimental"
+   ],
+   "failed_checks": [
+    "Stateless tests (arm_binary, ParallelReplicas, s3 storage, parallel)"
+   ],
+   "pending_checks": 22,
+   "passed_checks": 152,
+   "events": [
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:16Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:2317] \u274c Suppress the holder's blind removal after an unconfirmed release.\n\n`setAlreadyRemoved` runs only when the first `remove` succeeds. On failure, this reset invokes `EphemeralNodeHolder`'s destructor, which issues another unconditional `tryRemove` of `/leader`. A server-side `ZOPERATIONTIMEOUT` can leave the original removal committed; `receiveEvent` completes the error callback before marking the client expired (`ZooKeeperImpl.cpp:1459-1464`). If the caller runs before that finalization, a peer can acquire the freed path and this destructor can send its second removal against the peer's node. That peer still has a live session and continues working, while another replica can now win leadership.\n\nPlease suppress the destructor removal before forgetting an unconfirmed holder, as `releaseLeadershipAtShutdown` already does, and leave recovery to ownership-checked cleanup. This failure path needs a focused handover test.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329311838"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:16Z",
+     "text": "[src/Interpreters/InterpreterDropQuery.cpp:593] \u274c Preflight standalone coordinated tables before a database-wide truncate.\n\nThis hook protects a `MaterializedPostgreSQL` database, but an ordinary `Atomic` database containing the coordinated single-table engine inherits the no-op hook. `TRUNCATE ALL TABLES FROM db` enumerates both the wrapper and its automatically created `<uuid>_nested` table, then runs their truncations independently (`InterpreterDropQuery.cpp:797-884`). The wrapper throws `NOT_IMPLEMENTED`, while the nested `ReplicatedReplacingMergeTree` successfully truncates the shared data on every replica. The slot and `snapshot_completed` marker remain intact, so unchanged historical rows still present in PostgreSQL are never reloaded.\n\nPlease reject this operation before scheduling any nested-table truncation, including for the standalone engine in an `Atomic` database, and add coverage for that enclosing-database path.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329311847"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:16Z",
+     "text": "[src/Storages/PostgreSQL/StorageMaterializedPostgreSQL.cpp:328] \u26a0\ufe0f Recover a standalone replica when its enclosing database drop is refused.\n\nFor a standalone coordinated table in an `Atomic` database, `DROP DATABASE` calls `flushAndPrepareForShutdown` on every table, including `<uuid>_nested`, before reaching this teardown (`InterpreterDropQuery.cpp:619-684`). The nested replicated table has therefore already permanently cancelled fetches/merges and stopped its restarting thread. If Keeper is unavailable, this teardown throws before the handler is stopped, so `isStopped` is false and the recovery below does not run. The enclosing `Atomic` database also inherits the no-op `onDropDatabaseFailed`.\n\nOnce Keeper returns, the mounted table still uses that permanently stopped nested replica; the reconstruction in `ensureNestedTablesExist` is never rearmed. Please preflight this enclosing-database path before preparation, or explicitly recover the prepared standalone replica after refusal. Cover a failed parent `DROP DATABASE`, rather than only `DROP TABLE` of the wrapper.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329311855"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:22Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:outdated] The `czxid` comparison still does not make the removal atomic. At `PostgreSQLReplicationHandler.cpp:218-227`, the queued task can read the old election's node and pass the new comparison, then pause before `tryRemove`. A concurrent reattach removes that leftover through `removeLeakedOwnLeaderNode` at `:2350` and creates a new `/leader` at `:2229`; the recreated node starts at version zero again. The queued `tryRemove(path, stat.version)` then succeeds against the new election, because the remove request checks only the version, not the saved `czxid`. Its worker keeps its live session and leadership flag while another replica can now win the freed path.\n\nPlease serialize pending cleanup with re-election, or make the deletion itself identify the election term. The current read-time `czxid` check leaves the original race reachable.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329312937"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:30Z",
+     "text": "[src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.cpp:915] The original stopped-survivor issue is still reachable with concurrent detaches. With replicated tables `a` and `b`, both `DETACH ... PERMANENTLY` queries can pass the new check at `DatabaseMaterializedPostgreSQL.cpp:541-545` before either table is removed: different table DDL guards share the database lock. Both then reach `InterpreterDropQuery.cpp:332` and shut down their nested storages. `table_membership_mutex` is acquired only afterward at `DatabaseMaterializedPostgreSQL.cpp:876`; after the first detach removes `a`, the second throws from the last-table backstop at `:915-916`, leaving `b` mounted with permanently cancelled merges and cleanup.\n\nThe membership decision must stay protected through shutdown and detachment, or this refusal must rebuild the stopped survivor. The sequential last-table test does not exercise this interleaving.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329314454"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T12:14:31Z",
+     "text": "[src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.cpp:1244] \u26a0\ufe0f Preserve the nested-table identities on an allowed database rename.\n\nWith a literal Keeper path such as `/pg/ha`, this guard permits `RENAME DATABASE pg TO pg2`. However, `DatabaseAtomic::renameDatabase` renames the physical nested tables, while the separate wrappers in `materialized_tables` retain their captured `nested_table_id` with `database_name = pg`. A subsequent `SELECT` from `pg2.t` gets that cached wrapper; `getNested` submits the old ID, and the UUID lookup in `DatabaseCatalog` rejects it with `TABLE_UUID_MISMATCH` because the physical table now belongs to `pg2`. Readiness polling skips already-ready wrappers, so it does not repair this. Standalone coordinated tables in a renamed `Atomic` database have the same captured-ID problem.\n\nPlease reject these renames before changing metadata, or update the wrappers, nested IDs, and handler state consistently. Cover a constant-path rename with immediate reads and continued replication without a server restart; the existing rename tests only exercise the `{database}`-macro rejection.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4336638301"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T02:12:23Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:467] The startup check is present, but the original wrong-source teardown case remains. At `PostgreSQLReplicationHandler.cpp:3055`, `coordinatedTeardownBeforeDataDrop` can win the established replica's registration without checking its source identifier. `shutdownFinal` then removes `/source_system_identifier` at line 3343 and opens `connection_info` at line 3914 to drop the publication and slot by name at lines 3922 and 3937.\n\nFor an established sole replica, change its named collection's endpoint (or repoint its hostname) to another PostgreSQL cluster with the same database/table names and restart. Startup correctly refuses the identifier mismatch, but `DROP` still owns the original registration and follows this unchecked teardown path. It can delete the other cluster's identically named publication/slot while leaving the original source's objects behind.\n\nPlease verify the target cluster against the recorded source before any destructive teardown, retaining that identity and failing closed on a mismatch. The checks at lines 2393 and 2423 only cover registration/startup.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4343895935"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T02:12:34Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:2104] \u274c Synchronize the nested identity when publishing a replacement snapshot.\n\nThis new publication path can call `StorageMaterializedPostgreSQL::set` repeatedly on a wrapper that has already served queries: the missing-marker/generation branches reset its availability, then this call publishes it again after catch-up. `set` assigns the non-atomic `nested_table_id` (`StorageMaterializedPostgreSQL.cpp:299`), while `getNestedStorageID` copies the same `std::optional<StorageID>` and its strings without a lock at lines 250\u2013253.\n\nA query can retain a ready wrapper and pass its availability check, then overlap the reset/republication while resolving its nested table. Standalone planner capability probes also call `tryGetNested` without checking availability. Changing `has_nested` therefore does not exclude these readers, and this creates a C++ data race/undefined behavior even when both assignments contain the same identity.\n\nPlease synchronize every nested-identity read/write, or publish an immutable state snapshot, before allowing repeated `set` calls. A focused TSan check should exercise snapshot republication concurrently with planning/reads. This is separate from the existing standby partial-result window: fixing readiness timing alone does not protect these strings.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4343896773"
+    }
+   ],
+   "history": [
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-18T10:40:43Z",
+     "text": "[src/Storages/PostgreSQL/StorageMaterializedPostgreSQL.cpp:583] \u26a0\ufe0f Reconstruct the surviving plain nested storage during recovery.\n\nWhen the nested table survives the failed drop, this restarts the PostgreSQL consumer in attach mode against the same `StorageMergeTree` that `StorageMaterializedPostgreSQL::shutdown` already shut down at line 335. Its `shutdown_called` flag stays set, and `StorageMergeTree::flushAndPrepareForShutdown` permanently cancels merges and moves and stops cleanup (`StorageMergeTree.cpp:334\u2013386`). Neither the attach path nor the snapshot path reconstructs that storage.\n\nWrites still succeed, so `test_plain_single_table_engine_refused_drop_recovers` passes its row-count assertions, but subsequent WAL batches accumulate unmergeable parts until replication reaches `TOO_MANY_PARTS`. Plain database refused-drop recovery and failed permanent-detach compensation also reuse these stopped survivors.\n\nPlease reattach or reconstruct the surviving plain nested storage while preserving its data and slot position, and extend the refused-drop regression to verify that background merging resumes.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4306704180"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "you",
+     "at": "2026-10-20T18:52:19Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:outdated] \ud83d\udd75 Fixed in e9038cb8c19. Right after winning an election, the handler records the `czxid` of the `/leader` node it created. A release handed to `LeakedLeaderNodeReleaser` carries that `czxid`, and it treats a node with a different `czxid` as belonging to someone else. A node created by a later election (even under the same replica name and session after `DETACH`/`ATTACH`) is therefore never removed by the old queued entry. I did not add a dedicated test: it would need a failpoint that keeps the release failing while the session stays alive, plus a reattach. The existing `test_graceful_stop_releases_leader_even_when_removal_fails` still passes.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4328940226"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "you",
+     "at": "2026-10-20T18:52:26Z",
+     "text": "[src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.cpp:915] \ud83d\udd75 Fixed in e9038cb8c19. The last-table check moved into `DatabaseMaterializedPostgreSQL::checkTableCanBeDetachedPermanently`. `StorageMaterializedPostgreSQL::checkTableCanBeDetachedPermanently` calls it before `InterpreterDropQuery` calls `flushAndShutdown`, so the refused detach never shuts the nested table down. The check in `detachTablePermanently` stays as a backstop. `test_detach_permanently_of_last_table_is_rejected` passes.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4328941546"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "you",
+     "at": "2026-10-20T18:52:42Z",
+     "text": "[src/Storages/PostgreSQL/StorageMaterializedPostgreSQL.cpp:583] \ud83d\udd75 Partially addressed in e9038cb8c19. For the single-table engine, `shutdown(/* is_drop */ true)` no longer shuts the nested table down. `dropInnerTableIfAny` drops it, and that drop shuts it down itself, so a drop refused before the nested drop (the `materialized_postgresql_fail_nested_table_drop` case and the coordinated teardown refusals) resumes into a nested table whose merges were never stopped. A failure from inside the nested table's own drop, after it has shut the table down, still leaves a stopped survivor. The same is true for the database paths (the failed-`DETACH ... PERMANENTLY` compensation and the `DROP DATABASE` recovery): there the wrapper's `flushAndShutdown` is the only shutdown the nested table gets before `DatabaseAtomic::dropTable`. Fixing those needs a way to rebuild a shut-down `MergeTree` in place: detach it from the `Atomic` database and attach a fresh storage object from its metadata, with the UUID-mapping and in-flight-reference issues that brings. I am leaving this thread open for a decision on whether that is worth adding to this PR.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4328944428"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T02:12:23Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:467] The startup check is present, but the original wrong-source teardown case remains. At `PostgreSQLReplicationHandler.cpp:3055`, `coordinatedTeardownBeforeDataDrop` can win the established replica's registration without checking its source identifier. `shutdownFinal` then removes `/source_system_ident [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4343895935"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:22Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:outdated] The `czxid` comparison still does not make the removal atomic. At `PostgreSQLReplicationHandler.cpp:218-227`, the queued task can read the old election's node and pass the new comparison, then pause before `tryRemove`. A concurrent reattach removes that leftover through `removeLeakedOwnLeaderNode` a [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329312937"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:30Z",
+     "text": "[src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.cpp:915] The original stopped-survivor issue is still reachable with concurrent detaches. With replicated tables `a` and `b`, both `DETACH ... PERMANENTLY` queries can pass the new check at `DatabaseMaterializedPostgreSQL.cpp:541-545` before either table is removed: different table DDL guards share the datab [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329314454"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:16Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:2317] \u274c Suppress the holder's blind removal after an unconfirmed release.\n\n`setAlreadyRemoved` runs only when the first `remove` succeeds. On failure, this reset invokes `EphemeralNodeHolder`'s destructor, which issues another unconditional `tryRemove` of `/leader`. A server-side `ZOPERATIONTIMEOUT` can l [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329311838"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:16Z",
+     "text": "[src/Interpreters/InterpreterDropQuery.cpp:593] \u274c Preflight standalone coordinated tables before a database-wide truncate.\n\nThis hook protects a `MaterializedPostgreSQL` database, but an ordinary `Atomic` database containing the coordinated single-table engine inherits the no-op hook. `TRUNCATE ALL TABLES FROM db` enumerates both the wrapper and  [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329311847"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T19:26:16Z",
+     "text": "[src/Storages/PostgreSQL/StorageMaterializedPostgreSQL.cpp:328] \u26a0\ufe0f Recover a standalone replica when its enclosing database drop is refused.\n\nFor a standalone coordinated table in an `Atomic` database, `DROP DATABASE` calls `flushAndPrepareForShutdown` on every table, including `<uuid>_nested`, before reaching this teardown (`InterpreterDropQuery.cpp:619-684`).  [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4329311855"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T12:14:31Z",
+     "text": "[src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.cpp:1244] \u26a0\ufe0f Preserve the nested-table identities on an allowed database rename.\n\nWith a literal Keeper path such as `/pg/ha`, this guard permits `RENAME DATABASE pg TO pg2`. However, `DatabaseAtomic::renameDatabase` renames the physical nested tables, while the separate wrappers in `materialized_tables` reta [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4336638301"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T02:12:34Z",
+     "text": "[src/Storages/PostgreSQL/PostgreSQLReplicationHandler.cpp:2104] \u274c Synchronize the nested identity when publishing a replacement snapshot.\n\nThis new publication path can call `StorageMaterializedPostgreSQL::set` repeatedly on a wrapper that has already served queries: the missing-marker/generation branches reset its availability, then this call publishes it again [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110886#discussion_r4343896773"
+    }
+   ],
+   "error": "",
+   "open_threads": 11
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 112313,
+   "title": "Keep an S3Queue file retryable after losing the race for its `processing` node",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/112313",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:07:44Z",
+   "head_committed_at": "2026-10-22T01:44:02Z",
+   "rollup_failed": true,
+   "labels": [
+    "pr-bugfix",
+    "comp-s3queue"
+   ],
+   "failed_checks": [
+    "Performance Comparison (arm_release, master_head, 4/6)",
+    "Performance Comparison (arm_release, master_head, 5/6)"
+   ],
+   "pending_checks": 0,
+   "passed_checks": 174,
+   "events": [
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T00:03:46Z",
+     "text": "[src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:1266] **\u274c Blocker: keep the ordering barrier until the deferred file is queued**\n\n`waitOrderingDomainGate` removes `b.csv` from the unresolved claims and releases `next_mutex` before its caller reaches `rememberBlockedFile` or `queueReplay` at lines 1392\u20131406. That leaves an interval in which no guard represents `b.csv`.\n\nFor `a.csv < b.csv < c.csv` in one domain, let `b.csv` return `Blocked` behind foreign-held `a.csv`, then pause that thread before it queues `b.csv`. Another thread can resolve `a.csv` and let `c.csv` pass the gate. When the first thread resumes, it retains `b.csv` behind a blocker which is already gone, so nothing replays it; committing `c.csv` advances the pointer past the unprocessed `b.csv`. The `BehindReplay` branch has the same interval if the smaller replay is handed out before `b.csv` is queued. This does not require a local processing failure.\n\nA deterministic check using the current helper bodies reproduces both handoffs. Please transfer the file into its deferred queue atomically with removing its unresolved-claim barrier, and reconsider the blocker under that same lock. Add focused coverage that resolves the smaller blocker between the gate decision and queue insertion.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#discussion_r4331631333"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T00:03:46Z",
+     "text": "[src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:1007] **\u274c Blocker: distinguish an unresolved local claim from a terminal outcome**\n\n`trySetProcessing` also returns `false` when `processing_lock.try_lock` fails, without reading Keeper or publishing an outcome. Consequently, `!foreign_processing` here does not imply that the file is terminal or locally owned.\n\nTwo tables sharing a `keeper_path` share the same `FileStatus`, but have separate ordering gates. With `buckets = 1` and `a.csv < b.csv`, let table A hold `a.csv`'s `processing_lock` while its Keeper claim is in flight; another server owns the actual `processing` node, and the cached state is still `None`. Table B's claim returns `false` on that lock. This branch removes B's unresolved barrier and drops `a.csv`, so B can claim and commit `b.csv` before A discovers the foreign hold. If the foreign holder releases `a.csv` without committing, the advanced pointer permanently skips it. No processor on this server ever successfully owned `a.csv`, so this differs from the separately tracked local-owner failure case.\n\nAn extracted-method check reproduces B permitting the later file while A's claim is parked. Please preserve/recheck the ordered gap on lock contention until the shared claim's outcome is known, rather than treating contention as resolution, and cover two tables sharing one status with an unresolved foreign-owner probe.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#discussion_r4331631347"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T02:08:37Z",
+     "text": "[src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:1431] **\u274c Blocker: preserve the ordered gap when the claim throws**\n\nAn exception from `trySetProcessing` does not establish ownership or a terminal state, but this catch removes the file's unresolved-claim barrier and discards the object without retrying it or invalidating the iterator. The generic catch below does the same.\n\nFor `a.csv < b.csv` in one domain, use `buckets = 1` and one processing thread. Let the listing pre-filter accept both files, while a foreign processor holds `a.csv`. If the claim of `a.csv` exhausts its Keeper retries before observing that hold, its cached state can still be `None`. This catch erases its only barrier. The exception happens before `generateImpl` adds the file to `processed_files`, so the failed-insert cleanup has nothing to return for retry. `streamToViews` retains the unfinished iterator, and its next cycle continues at `b.csv` after Keeper recovers. Committing `b.csv` advances the `processed` pointer past `a.csv`, permanently losing it if the foreign holder later releases it without committing. No successful local ownership or local read failure is involved.\n\nPlease retain/retry the failed claim as an ordered gap, or stop the iterator and make pending gates honor that stop before releasing this barrier. Add focused coverage for a claim exception after the listing pre-filter, followed by recovery, asserting that the later file cannot commit past the earlier file.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#discussion_r4343877255"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-13T06:07:14Z",
+     "text": "The fix is already in progress: #123121 (mine, open).\n\nThis is the race from #112642: query 26 of `05210` sends a subquery over a twice-referenced MATERIALIZED CTE to the replicas before the initiator has materialized `_materialized_cte_c_*`, so the replica cannot resolve it (all 104 reruns passed). On the head of #123121 (`eb9385ea`), `05210` passes in this job. Nothing in this PR needs to change.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#issuecomment-6139402875"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-15T21:09:37Z",
+     "text": "\ud83d\udd75 The only CI failure, `05345_text_index_prewhere_read_step_order` in `Stateless tests (arm_binary, ParallelReplicas, s3 storage, parallel)`, is unrelated to this PR (a flaky text index test under parallel replicas); its fix is in progress in https://github.com/ClickHouse/ClickHouse/pull/125892.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#issuecomment-6202332240"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-17T02:18:26Z",
+     "text": "\ud83d\udd75 @groeneai, investigate the failure: [link] (`05024_autopr_plan_based_parallel_replicas`, flaky: 10/120 reruns fail with the same settings; unrelated to S3Queue) and provide a fix in a separate PR. If the fix is already in progress, link it here \u2014 https://github.com/ClickHouse/ClickHouse/pull/125544 looks related.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#issuecomment-6228413312"
+    },
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-17T02:55:27Z",
+     "text": "The fix is in progress: #125544 (open, test-only; it covers `05024_autopr_plan_based_parallel_replicas` and its three siblings; CI is green and it is waiting for review).\n\nSame mechanism, measured from this job's `query_log` (original run + 120 reruns): the automatic parallel replicas gate saw a constant `input_bytes = 140624` (a compressed `Wide` part, `min_bytes_for_wide_part = 0`) against an `output_bytes` estimate of 7735..76000 (two-level aggregation from `group_by_two_level_threshold_bytes = 1`). With this test's settings the gate reduces to `input_bytes > 2 * output_bytes`, so `query_1` declined parallel replicas in exactly the 11 runs whose estimate was 72636 or 76000 (the original failure plus the 10 failed reruns) and used them in all 110 runs at 69833 or less. #125544 stores `WatchID` with `CODEC(NONE)`, which keeps the read size far above that threshold.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#issuecomment-6228750122"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T00:03:46Z",
+     "text": "[src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:1266] **\u274c Blocker: keep the ordering barrier until the deferred file is queued**\n\n`waitOrderingDomainGate` removes `b.csv` from the unresolved claims and releases `next_mutex` before its caller reaches `rememberBlockedFile` or `queueReplay` at lines 1392\u20131406. That leaves an interval in which no guard rep [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#discussion_r4331631333"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-21T00:03:46Z",
+     "text": "[src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:1007] **\u274c Blocker: distinguish an unresolved local claim from a terminal outcome**\n\n`trySetProcessing` also returns `false` when `processing_lock.try_lock` fails, without reading Keeper or publishing an outcome. Consequently, `!foreign_processing` here does not imply that the file is terminal or locally o [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#discussion_r4331631347"
+    },
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T02:08:37Z",
+     "text": "[src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:1431] **\u274c Blocker: preserve the ordered gap when the claim throws**\n\nAn exception from `trySetProcessing` does not establish ownership or a terminal state, but this catch removes the file's unresolved-claim barrier and discards the object without retrying it or invalidating the iterator. The generic catch [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/112313#discussion_r4343877255"
+    }
+   ],
+   "error": "",
+   "open_threads": 3
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127308,
+   "title": "Attach the datasets of the performance tests to Atomic databases",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127308",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:05:21Z",
+   "head_committed_at": "2026-10-22T01:26:30Z",
+   "rollup_failed": true,
+   "labels": [
+    "comp-ci-infrastructure",
+    "pr-ci"
+   ],
+   "failed_checks": [
+    "Performance Comparison (amd_release, master_head, 3/6)",
+    "Finish Workflow"
+   ],
+   "pending_checks": 0,
+   "passed_checks": 173,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T01:03:36Z",
+     "text": "Workflow [PR], commit [3b79922a]\n\n**Summary:** \u274c\n- Performance Comparison: Performance dashboard\n\n|job_name|test_name|status|info|comment|\n|:--|:--|:-:|:--|:--|\n|Performance Comparison (amd_release, master_head, 3/6)||FAIL|Performance dashboard||\n||text_index_like \\#3|FAIL|dashboard||\n|Finish Workflow||FAIL|||\n||python3 ./ci/jobs/scripts/workflow_hooks/can_be_merged.py|FAIL|||",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127308#issuecomment-6330125749"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-22T05:05:21Z",
+     "text": "Ok, it works.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/127308#issuecomment-6333182461"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126538,
+   "title": "Do not publish wrapped deltas of perf event counters",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126538",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "UNKNOWN",
+   "updated_at": "2026-10-22T05:04:55Z",
+   "head_committed_at": "2026-10-22T04:30:23Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-improvement",
+    "comp-logging"
+   ],
+   "failed_checks": [],
+   "pending_checks": 14,
+   "passed_checks": 38,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T09:11:53Z",
+     "text": "### Build profile diff (arm_release)\n\nComparing `f55297d01` with master `c8a410bb9` (stripped binary size, per-symbol sizes and ThinLTO time; compile times per translation unit against the most recent warmup build that recompiled it).\n\n\u2705 No significant changes.\n\n[details collapsed]\n\n[details collapsed]\n\nJob report",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126538#issuecomment-6287563618"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-17T21:36:07Z",
+     "text": "Workflow [PR], commit [955bbf10]\n\n---\n#### AI Review\n\n##### Summary\n\nPR https://github.com/ClickHouse/ClickHouse/pull/126538 prevents unsigned perf-counter deltas from wrapping by skipping samples whose count or timing values decrease, while retaining the current values as the next baseline. Reviewed head `955bbf10a358b3fc31d97db2aed8a01829ef064d`; no actionable findings.\n\n##### Missing context / blind spots\n\n- \u26a0\ufe0f No live perf-event regression test was run. The PR explains that perf events are unavailable in CI; a run on a perf-enabled Linux host would close this runtime validation gap.\n\n##### Final Verdict\n\nStatus: **\u2705 Approve**. The narrow arithmetic guard is supported by code inspection; the lack of live perf-event coverage has an explicit environment limitation.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126538#issuecomment-6241500846"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-22T04:48:48Z",
+     "text": "\ud83d\udd75 The only CI failure, `test_storage_rabbitmq/test.py::test_rabbitmq_reconnect_drops_stale_deliveries` ([link] has nothing to do with this change: `rabbitmqctl list_queues` hung for 300 s inside the RabbitMQ container. A fix is already open: https://github.com/ClickHouse/ClickHouse/pull/126746. I merged the latest `master` into this branch so CI runs again.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126538#issuecomment-6332970701"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 115581,
+   "title": "Explain why `url` rejects a pattern that `s3` accepts",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/115581",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T05:03:06Z",
+   "head_committed_at": "2026-10-22T04:42:05Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-improvement",
+    "comp-table-functions"
+   ],
+   "failed_checks": [],
+   "pending_checks": 21,
+   "passed_checks": 30,
+   "events": [
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-20T06:31:10Z",
+     "text": "[src/Databases/DatabaseRemote.cpp:outdated] [P1] Preserve loading of existing mixed-pattern databases\n\nThis switches stored definitions to a stricter limit during startup too: `registerDatabaseRemote` calls `buildClusters` unconditionally on internal metadata replay. For example, `Remote('127.0.0.1:{10000..10599}|127.0.0.1:9000', 'default')` has 600 shards with 2 replicas each. The previous checks accepted both stages at the default limit of 1000; this call now throws at 1200 total addresses. `loadDatabase` propagates that exception, so upgrading a server with such an existing database can prevent the whole server from starting, before an administrator can issue `SET`. The shared parser change likewise prevents existing `Remote`/`RemoteSecure` tables from loading.\n\nPlease preserve the previous expansion rules when replaying existing metadata, or put the stricter semantics behind a versioned compatibility setting, and cover loading a previously accepted mixed-pattern definition. The new total limit can still apply to newly created objects.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/115581#discussion_r4322102495"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:02:53Z",
+     "text": "[src/Databases/DatabaseRemote.cpp:outdated] The loading regression is still present for stored `AS remote(...)` / `AS remoteSecure(...)` tables. At the current head, `src/TableFunctions/TableFunctionRemote.cpp:30-31` calls `parseRemoteFunctionArguments` without `limit_total_addresses`, so it remains `true`. Startup reaches this call through `factory.get` in `src/Databases/DatabaseOnDisk.cpp:149`, before the cached columns or lazy storage proxy are used; it never reaches the exemption in `registerStorageRemote`.\n\nA minimal regression case is the table-function version of the new test:\n\n```sql\nSET table_function_remote_max_addresses = 4;\nCREATE TABLE remote_mixed_tf (dummy UInt8)\nAS remote('127.0.0.{1,2}:{9000|9001}', system.one);\nDETACH TABLE remote_mixed_tf;\nSET table_function_remote_max_addresses = 3;\nATTACH TABLE remote_mixed_tf;\n```\n\nThe last statement still takes the total-limit path and throws at four addresses, although the stored definition fits the previous per-stage limit. With a previously stored 600-shard/two-replica definition, startup likewise rejects the table at the default limit of 1000. Please carry the metadata-replay exemption into table-function argument parsing too, and cover this persisted representation in the regression test.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/115581#discussion_r4344724997"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-09T11:06:12Z",
+     "text": "\ud83d\udd75 Thanks @groeneai for tracking down the `APPLY` prefix collision and opening #124759. The fuzzer red was on `0b2713946b47`; on the current head `d6669d2f5d6b` all checks pass, there are no unresolved review threads, and the branch merges cleanly with master, so no further change is needed here.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/115581#issuecomment-6079638130"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-18T02:27:35Z",
+     "text": "\ud83d\udd75 Merged `master` to pick up cd072cff53e (pins the old image of `test_custom_s3_disk_remote_url_allow_hosts` to 26.8.26.12). That test was failing across many unrelated PRs on 2026-10-16 and 2026-10-17, and it caused the red `Integration tests (arm_binary, 3/4)` here. The other failure in that job, `test_memory_limit/test.py::test_multiple_queries`, was a `No route to host` network error with a `retry_ok` label. There are no unresolved review threads. The merged tree builds.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/115581#issuecomment-6244720496"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-20T06:08:31Z",
+     "text": "\ud83d\udd75 The only red check was `Style check` / `broken_links`, and it was a false positive. The checker stops a URL at the first `{`, so it tested the glob template in the `url` documentation example as the cut-off prefix `.../pageviews-20200101-`, which returns 404. I added that prefix to `ci/jobs/scripts/check_style/broken_links_ignore.txt` and merged `master`. The merge applied cleanly and `clickhouse` builds.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/115581#issuecomment-6284612657"
+    },
+    {
+     "kind": "inline_comment",
+     "author": "you",
+     "at": "2026-10-22T04:42:42Z",
+     "text": "[src/Databases/DatabaseRemote.cpp:outdated] \ud83d\udd75 Fixed in c4adba3a3e0: `parseRemoteDescriptionWithFailover` got a `limit_total_addresses` flag. When the server replays a definition it stored itself (`isLoadingFromExistingMetadata` for the `Remote`/`RemoteSecure` database engines, `isReplayedTableDefinition` for the table engines), the old per-stage limit is applied (shards and the replicas of every shard each bounded by `table_function_remote_max_addresses`), so previously accepted mixed-pattern definitions keep loading. New definitions are still checked against the total. Covered by a gtest case and `05442_remote_glob_mixed_shards_replicas_attach_stored_definition` (create under a larger limit, `DETACH`, short `ATTACH` under a smaller limit).",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/115581#discussion_r4344620212"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [
+    {
+     "kind": "thread",
+     "author": "clickhouse-gh[bot]",
+     "at": "2026-10-22T05:02:53Z",
+     "text": "[src/Databases/DatabaseRemote.cpp:outdated] The loading regression is still present for stored `AS remote(...)` / `AS remoteSecure(...)` tables. At the current head, `src/TableFunctions/TableFunctionRemote.cpp:30-31` calls `parseRemoteFunctionArguments` without `limit_total_addresses`, so it remains `true`. Startup reaches this call through ` [...]",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/115581#discussion_r4344724997"
+    }
+   ],
+   "error": "",
+   "open_threads": 1
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 110493,
+   "title": "Fix MaterializedPostgreSQL database/table with ON CLUSTER",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/110493",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "UNKNOWN",
+   "updated_at": "2026-10-22T04:59:39Z",
+   "head_committed_at": "2026-10-22T04:38:37Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-bugfix",
+    "comp-postgresql"
+   ],
+   "failed_checks": [],
+   "pending_checks": 13,
+   "passed_checks": 39,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-20T07:06:32Z",
+     "text": "The fix is my #126210 (open). The stuck worker at `6ba2047f` (59.1 s on `range(CAST(766391 AS UInt32))`) has the same stack it addresses: `__asan_stack_malloc_1 <- PODArray::operator[] <- ColumnArray::compareAtImpl <- FunctionsStressTestThread::executeFunction`.\n\nMechanism: [link] #126210 changes only the test harness; its CI has finished and it is mergeable, still without a review.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110493#issuecomment-6285405186"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-11T10:23:11Z",
+     "text": "This is the job-level overrun that #123849 (mine, open) fixes by splitting `Stateless tests (arm_asan_ubsan, azure, sequential)` into 2 hash batches. @ Algunenano is merging it himself and asked me not to push to it; it currently conflicts with master.\n\nOn 708a9a49 the job did not hang: it reached 1158 / 1180 (1063 OK, 95 skipped, 0 failed) and was killed 12 s into the next test. Nothing in this PR needs to change for it.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110493#issuecomment-6108036938"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-12T07:19:39Z",
+     "text": "\ud83d\udd75 Thanks @groeneai \u2014 agreed, that was the job-level timeout tracked by #123849, not this PR. CI on the current head `1ebe8068028` is fully green. The two open review threads (persistent `rebuild required` state and the persisted configured table set for whole-schema databases) are still waiting on a human decision about the recovery contract, as explained in those threads.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110493#issuecomment-6119612967"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-15T03:26:06Z",
+     "text": "I see that most of the complexity in this PR is about migration.\r\n\r\nLet's use this approach to simplify it:\r\n- Introduce a table-level setting, `materialized_postgresql_use_unique_replication_consumer_identifier_mixed_with_server_uuid`, set it to 1 by default, but treat the unset value as zero.\r\n\r\nThis means that old tables will continue to work as is, and new tables will get new behavior, suitable for distributed operation, by default.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110493#issuecomment-6183698725"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-20T06:54:58Z",
+     "text": "\ud83d\udd75 @groeneai, investigate the failure: [link] (`FunctionsStress.stress`: a worker got stuck for 59 s in `range` on `SELECT range(CAST(766391 AS UInt32))`, in `ColumnArray::compareAtImpl` under ASan) and provide a fix in a separate PR. If the fix is already in progress, link it here. It is unrelated to this PR, which only touches `MaterializedPostgreSQL`.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110493#issuecomment-6285236218"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 117272,
+   "title": "Treat a bare table identifier on the right of `IN` as a deferred set for mutation pruning",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/117272",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "UNKNOWN",
+   "updated_at": "2026-10-22T04:55:46Z",
+   "head_committed_at": "2026-10-20T08:11:05Z",
+   "rollup_failed": false,
+   "labels": [
+    "pr-bugfix",
+    "comp-mutations"
+   ],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 179,
+   "events": [
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-20T08:38:11Z",
+     "text": "Already fixed by #126345 (merged 2026-10-19 10:34Z), so no new PR is needed.\n\nThe stack is the expected `INVALID_SCHEDULER_NODE` thrown in the query thread (`RequestQueue::enqueueRequest` <- `CPULeaseAllocation` constructor <- `PipelineExecutor::allocateCPU`) when `DROP WORKLOAD` races the query. The test filtered the client output line by line with `grep -v`, so the multi-line stack trace of that expected error leaked into stdout. #126345 drops the whole output of a query that failed with an expected error.\n\nThe 43f81d75 run (2026-10-18) was built before the fix; the new head 09b45dba already contains it. Since the merge: 667 master runs with 3 failures, all on commits without the fix, and the 2 PR failures were re-runs of workflows created before the merge.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/117272#issuecomment-6286962257"
+    }
+   ],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-07T14:18:27Z",
+     "text": "\ud83d\udd75 Status of the `CH Inc sync` failure (`tests failed (5 new, 8 known)` on https://github.com/ClickHouse/clickhouse-private/pull/71724): none of these failures are related to this PR. `05075` was skipped in every private job that reached it, and the logs contain no `Not-ready Set` exception. The failures are:\n- the `std::terminate` in `MergeTreeTransaction::afterCommit` during a background merge (the distributed-cache abort, https://github.com/ClickHouse/clickhouse-private/issues/77975)\n- the known flaky `01168_mutations_isolation`\n- MSan timeouts\n- a `Paimon` integration test that passed on retry\n- an ASOF join hitting `MEMORY_LIMIT_EXCEEDED`\n- `Duplicate announcement received for replica number` and `Hung check failed` in the stress tests, both seen on master\n\nI pushed a7b67b092ce for the review thread: the deferred-set guard now also follows a subcolumn of an `ALIAS` column named after the table. That push starts a new sync run.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/117272#issuecomment-6039920171"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-08T04:16:19Z",
+     "text": "\ud83d\udd75 The `CH Inc sync` run for a7b67b092ce (`tests failed (1 new, 7 known)` on https://github.com/ClickHouse/clickhouse-private/pull/71724) failed again for reasons unrelated to this PR. `05075` was skipped in the private jobs. The failures:\n- `Received signal 6` from `std::terminate` in `MergeTreeTransaction::afterCommit` during a background merge, in the three distributed-cache stateless jobs. This is the open https://github.com/ClickHouse/clickhouse-private/issues/77975\n- MSan stateless job timeouts (`04238_alter_rename_column_merge_race`, `01900_kill_mutation_parallel_long`)\n- `test_storage_iceberg_with_spark/test_compaction.py::test_compaction_cleanup_tasks_are_released[s3-2]`\n\nI re-ran the failed jobs of the private workflow.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/117272#issuecomment-6052091750"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-20T08:21:22Z",
+     "text": "\ud83d\udd75 @groeneai, investigate the failure: [link] (`03821_drop_workload_during_query_race`, exception from `RequestQueue::enqueueRequest` in stdout, 3/34 reruns failed) and provide a fix in a separate PR. If the fix is already in progress, link it here. The `Upgrade check` crash in `GraceHashJoin::addBuckets` is fixed on master by https://github.com/ClickHouse/ClickHouse/pull/126204, which I merged into this branch.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/117272#issuecomment-6286678814"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-22T04:55:46Z",
+     "text": "\ud83d\udd75 Thanks @groeneai. Confirmed: the head `09b45dba` contains https://github.com/ClickHouse/ClickHouse/pull/126345, and its CI run is green, so nothing more is needed here for `03821_drop_workload_during_query_race`.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/117272#issuecomment-6333060285"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126194,
+   "title": "Remove `enable_analyzer` and `allow_experimental_analyzer` from tests",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126194",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "MERGEABLE",
+   "updated_at": "2026-10-22T04:46:39Z",
+   "head_committed_at": "2026-10-22T01:18:59Z",
+   "rollup_failed": true,
+   "labels": [
+    "pr-not-for-changelog",
+    "comp-testing"
+   ],
+   "failed_checks": [
+    "Performance Comparison (arm_release, master_head, 1/6)"
+   ],
+   "pending_checks": 0,
+   "passed_checks": 175,
+   "events": [],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-17T23:20:53Z",
+     "text": "Acknowledged. I'm investigating the `Argument list too long` failure of the flaky-check and targeted jobs; no fix is in progress yet, so I'll follow up here with a separate PR (or my findings) shortly.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126194#issuecomment-6243003407"
+    },
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-10-18T00:25:17Z",
+     "text": "The fix is in https://github.com/ClickHouse/ClickHouse/pull/126545: the flaky check and targeted check now pass the selected tests to `clickhouse-test` through a file (`--test-list-file`), and the selectors are compiled once, so the 2745 tests of this PR are selected in seconds instead of about 40 minutes. It needs `can be tested` to run CI.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126194#issuecomment-6243698622"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-20T06:11:49Z",
+     "text": "\ud83d\udd75 Merged `master` (conflicts were in four tests: `02967`, `03254`, `05298`, `05339`) and removed `enable_analyzer` from the 45 tests added on `master` since the previous merge. The red flaky-check and targeted jobs are all the same `Argument list too long` runner failure, so the PR's tests were never run. Thanks @groeneai: that is fixed by https://github.com/ClickHouse/ClickHouse/pull/126545, which is still open, so these jobs will stay red until it is merged.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126194#issuecomment-6284656891"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-22T01:22:40Z",
+     "text": "\ud83d\udd75 Merged `master` again. The conflicts were in `01881_join_on_conditions_{hash,merge,merge_decimal}`, `03928`, `04371` and `04650`: I took the `master` version and removed `enable_analyzer` from it. I also removed `SET enable_analyzer = 1` from 7 tests added on `master` since the previous merge (`05055`, `05398`, `05399`, `05400`, `05402`, `05427`, `05428`). The `Argument list too long` failure of the flaky-check and targeted jobs is fixed on `master` by https://github.com/ClickHouse/ClickHouse/pull/126545, and this merge brings that fix in, so the PR's tests should actually run in the next CI round.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/126194#issuecomment-6330381227"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 110321,
+   "title": "Support INSERT ... VALUES in the polyglot SQL dialect",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/110321",
+   "state": "OPEN",
+   "merged": false,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": "UNKNOWN",
+   "updated_at": "2026-10-22T04:38:18Z",
+   "head_committed_at": "2026-10-22T01:42:43Z",
+   "rollup_failed": false,
+   "labels": [
+    "comp-sql-syntax",
+    "pr-experimental"
+   ],
+   "failed_checks": [
+    "Stress test (amd_debug)",
+    "AST fuzzer (amd_release, oracle)"
+   ],
+   "pending_checks": 10,
+   "passed_checks": 163,
+   "events": [],
+   "history": [
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-09-19T10:49:36Z",
+     "text": "\ud83d\udd75 Thanks @groeneai \u2014 acknowledging the three follow-ups on the unrelated reds, and reporting what this PR's own push does.\n\n- `ORDER BY ... WITH FILL` around a `NULL` fill key (the `Stress test (amd_debug)` red, STID `2508-4384`): https://github.com/ClickHouse/ClickHouse/pull/117832 is still open, so it is not on master and a master merge cannot clear that signature. Nothing to do here.\n- The fuzzed `prepare_stateful_data` wedge: https://github.com/ClickHouse/ClickHouse/pull/117997 merged on 2026-09-13, i.e. before this branch's last master merge `ebb2392ac21a` (merge-base 2026-09-18), so it is already in.\n- NATS: https://github.com/ClickHouse/ClickHouse/pull/119867 is closed and this branch carries master's pin `3e3a3f10`, which by your own measurement does not fix the ordering defect. That is a master-side decision about which gitlink to land; this PR does not touch it.\n\nOn this PR's own red \u2014 `Fast test` failing `05019_trino_dialect`, `05023_trino_conformance_tempto` and `05153_trino_dialect_wrappers_and_set` with `Unexpected packet from server (expected Data, Exception, Log or TimezoneUpdate, got Progress)`. That one was mine, not a flake: the client's verbatim path was keyed on \"any dialect other than `clickhouse`/`clickhouse_json`\" and so caught `trino`, whose parser deliberately keeps `ASTInsertQuery::data` pointing into the original buffer. Fixed in `38bd4ecb92a7` (verbatim is now `polyglot` only); all three tests pass locally.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110321#issuecomment-5741195083"
+    },
+    {
+     "kind": "comment",
+     "author": "groeneai",
+     "at": "2026-09-19T11:27:45Z",
+     "text": "Understood on all three. One thing to add on the gitlink: I am not opening a competing bump, because #120202 already pins `b88704df`, which is `cb4edba9` plus one commit in `src/unix/sock.c`, so it carries both merged fork fixes.\n\nMeasured cost while master stays on `3e3a3f10`: 514 red `test_storage_nats` rows across 59 pull requests in the last 10 days, including 16 jobs that lost 8 or more of the module's tests in a single shard, 6 of them to the `Code: 210` connection-refused cascade that follows the server dying.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110321#issuecomment-5741452735"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-09-25T08:51:39Z",
+     "text": "\ud83d\udd75 @groeneai thanks. Noted that #120202 carries the NATS gitlink fix (`b88704df`). This PR doesn't touch that pin, so nothing further is needed here. I replied separately on the open bot thread about lexically foreign URL queries: the concatenating path transpiles URL query and body as one statement, so no code change.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110321#issuecomment-5829640141"
+    },
+    {
+     "kind": "comment",
+     "author": "you",
+     "at": "2026-10-02T20:17:20Z",
+     "text": "\ud83d\udd75 Merged master (`e6853bbd5dd`) to resolve the conflicts. Notes on the resolution:\n- This PR's `IParser::consumesForeignText` is dropped in favor of master's equivalent `IParser::consumesRawText`.\n- Master changed how the polyglot dialect recognizes ClickHouse `SET` statements (`SET ROLE`, `SET TRANSACTION SNAPSHOT`, foreign prefixes such as MySQL `SET SESSION ...`). That logic now lives in `parsePolyglotNativeStatement`, and the server-side polyglot branch of `executeQuery` uses it too, replacing the bare `ParserSetQuery` this PR had used. Client and server now classify these statements the same way. I checked over HTTP that `SET ROLE NONE`, `SET TRANSACTION SNAPSHOT 1` (without the feature flag), `SET max_threads = 1 garbage` and `SET SESSION sql_mode = ...` behave as on master.\n- The open bot thread on lexically foreign URL queries was answered earlier (no code change: the concatenating path transpiles the URL query and the body together as one statement), so I resolved it.",
+     "url": "https://github.com/ClickHouse/ClickHouse/pull/110321#issuecomment-5960772972"
+    }
+   ],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  }
+ ],
+ "merged": [
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127309,
+   "title": "Add tests for numeric conversion to `DateTime64` / `Time64` at range boundaries",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127309",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127292,
+   "title": "Columns cache for projections",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127292",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127150,
+   "title": "Skip codec sanity checks for a TTL recompression codec on ATTACH (26.3)",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127150",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127114,
+   "title": "Update changelog for 26.10",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127114",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127089,
+   "title": "Combine the hashes of the row policy key with `SipHash`",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127089",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/llvm-project",
+   "number": 140,
+   "title": "[libc++] Add `_LIBCPP_DISALLOW_PRINTING_POINTERS` to make printing of pointers a compile-time error",
+   "url": "https://github.com/ClickHouse/llvm-project/pull/140",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/fmt",
+   "number": 1,
+   "title": "Add `FMT_DISALLOW_POINTERS` to make formatting of any pointer a compile-time error",
+   "url": "https://github.com/ClickHouse/fmt/pull/1",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127086,
+   "title": "Remove `detectCharset` and `detectLanguageUnknown` and the `nlp-data` submodule",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127086",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127019,
+   "title": "Move the `PCO` codec from beta to experimental in 26.10",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127019",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 127015,
+   "title": "Fix reading uninitialized memory in `polygonConvexHullCartesian`",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/127015",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126875,
+   "title": "Reduce divergence of `MergeTreeData` with downstream forks",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126875",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126842,
+   "title": "Port cloud and distributed cache options of `clickhouse-test` from downstream",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126842",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126639,
+   "title": "Use helpers to remove special column representations",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126639",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126554,
+   "title": "Fix cubic complexity of enumerating subcolumns of deeply nested types",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126554",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126553,
+   "title": "Fix use-after-free and reading of long values in complex key `ssd_cache` dictionaries",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126553",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126549,
+   "title": "Limit the total size of text bloom filter indexes and track their memory",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126549",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126548,
+   "title": "Limit recursion depth when deserializing query plans",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126548",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126546,
+   "title": "Validate malformed responses from HDFS DataNode and NameNode",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126546",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126536,
+   "title": "Do not wrap around when rounding row and byte settings to marks",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126536",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126534,
+   "title": "Fix misaligned `Pretty` formats for a huge value width limit",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126534",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126513,
+   "title": "Add setting `s3_use_idempotency_id`, disable it for Amazon S3 Tables",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126513",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/adsb.exposed",
+   "number": 90,
+   "title": "Experimental: Iceberg storage in S3, and a hidden Iceberg mode on the website",
+   "url": "https://github.com/ClickHouse/adsb.exposed/pull/90",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126397,
+   "title": "Revert \"Revert \"Evaluate PREWHERE functions of a dictionary-encoded Parquet column once per value\"\"",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126397",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126389,
+   "title": "Follow-up to the per-part statistics cache: weight of composite fields and structure of cloned statistics",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126389",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126226,
+   "title": "Enable hard links on `plain_rewritable` disks by default",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126226",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126178,
+   "title": "Calm down",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126178",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126176,
+   "title": "Do not correct the global memory tracker below jemalloc `stats.allocated`",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126176",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126168,
+   "title": "Fix flaky `04625_hash_table_sizes_stats_table_expression_modifiers` under tiny `index_granularity`",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126168",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 126108,
+   "title": "Revert \"Revert \"Fix a Keeper node silently ceasing to participate in Raft after a restart that replays local logs\"\"",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/126108",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 125135,
+   "title": "Support the Parquet `ALP` encoding",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/125135",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 125131,
+   "title": "Support the Parquet `GEOMETRY` and `GEOGRAPHY` logical types",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/125131",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 125093,
+   "title": "Replace the Cassandra driver library with a minimal native protocol client",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/125093",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 124808,
+   "title": "Query condition cache for TopK reads of data lakes",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/124808",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 120941,
+   "title": "Add a limited clang-tidy check to the merge queue",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/120941",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 118662,
+   "title": "Do not run `BlobKiller` and `BlobCopier` threads for disks that never need them",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/118662",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 116101,
+   "title": "Top-K threshold merge (Fagin's algorithm) for `GROUP BY ... ORDER BY aggregate LIMIT n`",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/116101",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  },
+  {
+   "repo": "ClickHouse/ClickHouse",
+   "number": 114550,
+   "title": "Deduplicate the final DISTINCT in parallel",
+   "url": "https://github.com/ClickHouse/ClickHouse/pull/114550",
+   "state": "MERGED",
+   "merged": true,
+   "draft": false,
+   "review_decision": null,
+   "mergeable": null,
+   "updated_at": "",
+   "head_committed_at": "",
+   "rollup_failed": false,
+   "labels": [],
+   "failed_checks": [],
+   "pending_checks": 0,
+   "passed_checks": 0,
+   "events": [],
+   "history": [],
+   "preview_checks": [],
+   "waiting": [],
+   "error": "",
+   "open_threads": 0
+  }
+ ]
+}

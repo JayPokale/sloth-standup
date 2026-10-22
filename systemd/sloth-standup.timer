@@ -1,0 +1,10 @@
+[Unit]
+Description=Run sloth-standup every morning
+
+[Timer]
+OnCalendar=*-*-* 07:00
+# Missed because the laptop was asleep? Run when it wakes.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

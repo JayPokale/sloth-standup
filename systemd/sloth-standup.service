@@ -1,0 +1,9 @@
+[Unit]
+Description=sloth-standup: read my pull requests and write the morning digest
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Ollama must be running (ollama serve, or its own systemd unit).
+WorkingDirectory=%h/sloth-standup
+ExecStart=/usr/bin/python3 -m standup --hours 24 --out %h/standup.md --notify

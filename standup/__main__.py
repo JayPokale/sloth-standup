@@ -19,9 +19,11 @@ from .snapshot import dump, load
 def main() -> int:
     parser = argparse.ArgumentParser(prog="standup", description=__doc__.splitlines()[0])
     parser.add_argument("--hours", type=float, default=24, help="look back this many hours (default 24)")
-    parser.add_argument("--model", default="gemma4:e4b", help="Ollama model (default gemma4:e4b)")
+    parser.add_argument("--model", default="gemma4:e2b", help="Ollama model (default gemma4:e2b)")
     parser.add_argument("--out", help="also write the digest to this file")
     parser.add_argument("--notify", action="store_true", help="show a desktop notification (notify-send)")
+    parser.add_argument("--author", help="digest someone else's open PRs (default: you)")
+    parser.add_argument("--limit", type=int, default=100, help="at most this many open PRs, most recently updated first")
     parser.add_argument("--save", metavar="FILE", help="save the collected activity to FILE (JSON)")
     parser.add_argument("--replay", metavar="FILE", help="use activity saved with --save instead of GitHub")
     parser.add_argument("--stats", action="store_true", help="print how much reading the digest saved, to stderr")
@@ -31,7 +33,7 @@ def main() -> int:
         login, since, prs, merged = load(args.replay)
     else:
         since = (datetime.now(timezone.utc) - timedelta(hours=args.hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        login, prs, merged = collect(since)
+        login, prs, merged = collect(since, author=args.author, limit=args.limit)
     if args.save:
         dump(args.save, login, since, prs, merged)
     busy = [p for p in prs if needs_judging(p)]
