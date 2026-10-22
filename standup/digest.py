@@ -161,8 +161,10 @@ def render(login: str, since: str, verdicts: list[Verdict], quiet: list[PullRequ
     quiet = [p for p in quiet if not p.failed_checks and not p.preview_checks]
     act = [v for v in verdicts if v.needs_me]
     # Judged only because of an old, already explained failure: nothing new to read, so one line for all of them.
-    explained = [v for v in verdicts if not v.needs_me and not v.pr.events]
+    explained = [v for v in verdicts if not v.needs_me and not v.pr.events and v.pr.failed_checks]
     fyi = [v for v in verdicts if not v.needs_me and v.pr.events]
+    # Judged for another reason (e.g. a followed-up review) but nothing new and nothing red: quiet.
+    quiet = quiet + [v.pr for v in verdicts if not v.needs_me and not v.pr.events and not v.pr.failed_checks]
     out = [f"# Morning standup for @{login}", f"Since {since[:16].replace('T', ' ')} UTC.", ""]
     if merged:
         out.append(f"## 🎉 Merged ({len(merged)})")
