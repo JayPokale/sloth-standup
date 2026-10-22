@@ -1,0 +1,16 @@
+{
+  "_rule": "needs_me = the author should do something today: answer or act on a request, fix a conflict, or look at a failing check that nobody has explained. Labelled by hand from the snapshot's events.",
+  "snapshot-since-2026-10-10.json": {
+    "ClickHouse/ClickHouse#126887": [false, "author already explained the red checks as flaky"],
+    "ClickHouse/ClickHouse#126886": [false, "CI green, AI review has no findings"],
+    "ClickHouse/ClickHouse#126885": [false, "CI green; author explained the earlier failure"],
+    "ClickHouse/ClickHouse#126573": [true, "two failing stateless tests, nobody has said why"],
+    "ClickHouse/ClickHouse#126564": [false, "author answered the requested change and the reviewer confirmed it"],
+    "interledger/rhyza#355": [true, "a failing changelog check nobody has explained"],
+    "davila7/claude-code-templates#1193": [true, "two failing checks, only a bot summary"],
+    "heilcheng/awesome-agent-skills#601": [false, "reviewer found nothing left to change"],
+    "ClickHouse/ClickHouse#126206": [false, "maintainer says the failure is unrelated and nothing is needed"],
+    "ClickHouse/ClickHouse#125994": [false, "AI review approves, no findings"],
+    "ClickHouse/ClickHouse#125674": [true, "unanswered review comment asking for a fix and a test"]
+  }
+}
