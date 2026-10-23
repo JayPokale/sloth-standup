@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 # Bots whose comments are only links or status boilerplate. Other bots (CI reports, review bots) are kept.
 # Deploy previews fail on pull requests from forks until a maintainer authorizes them; they say nothing about the code.
 PREVIEW_CHECKS = ("vercel", "netlify", "cloudflare pages", "deploy preview", "render preview")
-NOISE_BOTS = {"netlify", "changeset-bot", "vercel", "codecov", "github-actions", "coderabbitai", "sonarqubecloud"}
+NOISE_BOTS = {"mintlify", "netlify", "changeset-bot", "vercel", "codecov", "github-actions", "coderabbitai", "sonarqubecloud"}
 FAILED = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"}
 # Checks that only roll up the others: red when any job failed, or when CI has not run yet (e.g. awaiting approval).
 ROLLUP_CHECKS = {"Mergeable Check", "PR", "Finish Check", "CI running"}
